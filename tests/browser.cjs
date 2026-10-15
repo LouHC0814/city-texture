@@ -83,9 +83,50 @@ async function until(callback, label, timeout = 10000) {
       await delay(80);
     }
     const metric = slot => cdp.evaluate(`document.querySelector('#${slot}-metrics .metric-value').firstChild.textContent`);
-    const expected = (id, side, walk) => C.analyze(C.prepare(require(`../dist/data/${id}.js`)), side, walk).lengthKm.toFixed(2);
+    const expected = (id, side, walk, offset = [0, 0]) => C.analyze(C.prepare(require(`../dist/data/${id}.js`)), side, walk, offset).lengthKm.toFixed(2);
+    const currentState = async () => C.readState(await cdp.evaluate('location.hash'), ['zurich', 'bern']);
+    async function checkMoved() {
+      const s = await currentState(); assert.equal(await metric('left'), expected(s.left, s.side, s.walking, s.offset)); assert.equal(await metric('right'), expected(s.right, s.side, s.walking, s.offset)); return s;
+    }
+    async function dragMap(slot, dx, dy) {
+      await cdp.evaluate(`document.getElementById('${slot}-map').scrollIntoView({block:'center'})`);
+      const rect = await cdp.evaluate(`(()=>{const r=document.getElementById('${slot}-map').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+      await cdp.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y });
+      await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: rect.x, y: rect.y });
+      await cdp.call('Input.dispatchMouseEvent', { type: 'mouseMoved', button: 'left', buttons: 1, x: rect.x + dx, y: rect.y + dy });
+      await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: rect.x + dx, y: rect.y + dy });
+      await delay(60);
+    }
     await navigate(address);
     assert.equal(await metric('left'), expected('zurich', 0.75, true)); assert.equal(await metric('right'), expected('bern', 0.75, true));
+    await cdp.evaluate("document.querySelector('[data-side=\"0.5\"]').click()");
+    await dragMap('left', 80, 30); let moved = await checkMoved(); assert.ok(moved.offset[0] < 0 && moved.offset[1] > 0);
+    const beforeKey = moved.offset;
+    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    moved = await checkMoved(); assert.ok(moved.offset[0] > beforeKey[0]);
+    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Home', code: 'Home', windowsVirtualKeyCode: 36 });
+    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Home', code: 'Home', windowsVirtualKeyCode: 36 });
+    assert.deepEqual((await currentState()).offset, [0, 0]);
+    await dragMap('right', -70, -20); moved = await checkMoved(); assert.ok(moved.offset[0] > 0 && moved.offset[1] < 0);
+    await cdp.evaluate("document.querySelector('[data-side=\"0.25\"]').click();for(let i=0;i<30;i++)document.querySelector('[data-pan=\"1,0\"]').click()");
+    moved = await checkMoved(); const boundary = C.panBounds(['zurich', 'bern'].map(id => require(`../dist/data/${id}.js`)), 0.25);
+    assert.equal(moved.offset[0], boundary.maxX); assert.equal(await cdp.evaluate("document.querySelector('[data-pan=\"1,0\"]').disabled"), true);
+    assert.ok(await cdp.evaluate("document.getElementById('boundary-hint').textContent.includes('边界')"));
+    await cdp.evaluate("document.querySelector('[data-side=\"1\"]').click()"); moved = await checkMoved(); assert.ok(moved.offset[0] < 0.05);
+    // 隔离测试浏览器中的剪贴板边界，不读取或改动用户系统剪贴板。
+    await cdp.evaluate("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__copiedView=text;}}});document.getElementById('copy-view').click()");
+    const copied = await until(() => cdp.evaluate('window.__copiedView'), '复制视图参数'); const copiedState = await currentState();
+    assert.deepEqual(C.parseView(copied, ['zurich', 'bern']), copiedState);
+    await cdp.evaluate("document.getElementById('reset').click();document.getElementById('restore-view').click()");
+    await cdp.evaluate(`document.getElementById('view-code').value=${JSON.stringify(copied)};document.getElementById('view-form').requestSubmit()`);
+    assert.deepEqual(await currentState(), copiedState); await checkMoved();
+    await cdp.evaluate("document.getElementById('restore-view').click();document.getElementById('view-code').value='v=2&a=none';document.getElementById('view-form').requestSubmit()");
+    assert.ok(await cdp.evaluate("document.getElementById('view-error').textContent.length>0")); assert.deepEqual(await currentState(), copiedState);
+    await cdp.evaluate("document.getElementById('close-view').click();Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('test denied')}}});document.getElementById('copy-view').click()");
+    await until(() => cdp.evaluate("document.getElementById('view-dialog').open"), '手动复制后备路径');
+    assert.equal(await cdp.evaluate("document.getElementById('view-code').value"), copied);
+    await cdp.evaluate("document.getElementById('close-view').click();document.getElementById('reset').click()");
     for (const side of [0.25, 0.5, 1]) {
       await cdp.evaluate(`document.querySelector('[data-side="${side}"]').click()`);
       assert.equal(await metric('left'), expected('zurich', side, true)); assert.equal(await metric('right'), expected('bern', side, true));
@@ -99,10 +140,12 @@ async function until(callback, label, timeout = 10000) {
     await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }); await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
     assert.equal(await cdp.evaluate("document.getElementById('about-dialog').open"), false);
     await navigate(address + '/#v=1&a=bern&b=zurich&s=0.5&w=0'); assert.equal(await metric('left'), expected('bern', 0.5, false));
-    await cdp.evaluate("document.getElementById('reset').click();document.getElementById('report').click()");
+    await cdp.evaluate("document.getElementById('reset').click();document.querySelector('[data-pan=\"1,0\"]').click();document.getElementById('report').click()");
     const reportName = await until(async () => (await fs.readdir(downloads)).find(n => n.endsWith('.json')), '数据报告');
     const report = JSON.parse(await fs.readFile(path.join(downloads, reportName), 'utf8'));
     assert.equal(report.samples[0].city, '苏黎世'); assert.equal(report.samples[0].sideKm, 0.75); assert.equal(report.samples[1].source.license, 'ODbL-1.0');
+    assert.equal(report.appVersion, '0.2.0'); assert.ok(report.samples[0].center[0] > require('../dist/data/zurich.js').lon);
+    assert.deepEqual(report.samples[0].offsetKm, (await currentState()).offset); assert.deepEqual(report.samples[0].offsetKm, report.samples[1].offsetKm);
     await cdp.evaluate("document.getElementById('export').click()");
     const pngName = await until(async () => (await fs.readdir(downloads)).find(n => n.endsWith('.png')), '观察卡 PNG');
     const png = await fs.readFile(path.join(downloads, pngName)); assert.equal(png.subarray(1, 4).toString(), 'PNG'); assert.equal(png.readUInt32BE(16), 1600); assert.equal(png.readUInt32BE(20), 1200);
@@ -121,15 +164,23 @@ async function until(callback, label, timeout = 10000) {
     await cdp.call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }); await delay(150);
     assert.equal(await cdp.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
     assert.equal(await cdp.evaluate("Math.abs(document.getElementById('left-map').width-document.getElementById('right-map').width)<2"), true);
-    await screenshot('手机预览.png');
+    await cdp.call('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await cdp.evaluate("document.getElementById('left-map').scrollIntoView({block:'center'})");
+    const touchRect = await cdp.evaluate("(()=>{const r=document.getElementById('left-map').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()");
+    const touchBefore = (await currentState()).offset;
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchRect.x, y: touchRect.y }] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touchRect.x + 50, y: touchRect.y + 10 }] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await delay(80);
+    assert.notDeepEqual((await checkMoved()).offset, touchBefore);
+    await cdp.evaluate('scrollTo(0,0)'); await screenshot('手机预览.png');
     const standalone = await build(); await cdp.call('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
     await navigate(pathToFileURL(standalone).href); assert.equal(await metric('left'), expected('zurich', 0.75, true));
-    await cdp.evaluate("document.querySelector('[data-side=\"0.25\"]').click()"); assert.equal(await metric('right'), expected('bern', 0.25, true));
+    await cdp.evaluate("document.querySelector('[data-side=\"0.25\"]').click();document.querySelector('[data-pan=\"1,0\"]').click()"); await checkMoved();
     await cdp.evaluate("document.querySelector('.brand').click()"); await delay(80); assert.equal(await metric('right'), expected('bern', 0.75, true));
     assert.equal(cdp.errors.length, 0, JSON.stringify(cdp.errors));
     await fs.copyFile(path.join(downloads, pngName), path.join(screenshotDir, '双城观察卡.png'));
-    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['四种尺度双侧统计', '步行开关', '交换及选择城市', '同城一致性', 'URL恢复', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['桌面预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
-    console.log('浏览器检查通过：尺度、筛选、选择、交换、状态恢复、导出、手机布局、完全离线单文件；JavaScript 异常 0。');
+    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['四种尺度双侧统计', '鼠标左右图拖动', '键盘平移与Home', '共同边界限制', '缩放重新约束', '复制视图(隔离剪贴板接口)', '手动复制后备路径', '恢复与错误输入保护', '实际平移中心导出', '手机触摸拖动', '步行开关', '交换及选择城市', '同城一致性', 'v1 URL兼容', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['桌面预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
+    console.log('浏览器检查通过：鼠标/触摸/键盘平移、边界、视图恢复与复制后备、平移导出、原有比较、手机布局、完全离线单文件；JavaScript 异常 0。');
   } catch (e) { console.error(logs); throw e; }
   finally {
     if (cdp) cdp.socket.close();
