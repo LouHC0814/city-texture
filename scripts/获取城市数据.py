@@ -71,7 +71,7 @@ def fetch(city: dict, endpoint: str, force: bool = False, offline: bool = False)
     data = dict(city, extentKm=1.1, bbox=bbox, roads=roads, source=source)
     output = ROOT / "dist" / "data" / f"{city['id']}.js"
     content = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    output.write_text(f"/* © OpenStreetMap contributors; ODbL-1.0. See 数据许可.md. */\n(function(g){{const d={content};if(typeof module==='object'&&module.exports)module.exports=d;else (g.CITY_DATA ||= []).push(d);}})(globalThis);\n", encoding="utf-8")
+    output.write_text(f"/* © OpenStreetMap contributors; ODbL-1.0. See 数据许可.md. */\n(function(g){{const d={content};if(typeof module==='object'&&module.exports)module.exports=d;else (g.CITY_DATA ||= []).push(d);}})(globalThis);\n", encoding="utf-8", newline="\n")
     return dict(city=city["name"], roads=len(roads), bytes=output.stat().st_size, snapshotToken=data["source"]["snapshotToken"])
 
 
