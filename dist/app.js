@@ -5,7 +5,7 @@
   function notice(message, persistent = false) { clearTimeout(noticeTimer); $('status').textContent = message; if (!persistent) noticeTimer = setTimeout(() => { $('status').textContent = ''; }, 4500); }
   if (!C || cities.length < 2) { notice('城区数据加载失败。请完整解压项目后打开 dist/index.html，或使用单文件预览版。', true); return; }
   const ids = cities.map(c => c.id), byId = Object.fromEntries(cities.map(c => [c.id, c]));
-  let state = C.readState(location.hash, ids), prepared, results = {};
+  let state = C.readState(location.hash, ids), prepared, results = {}, limits, drag = null, panFrame;
   try { prepared = Object.fromEntries(cities.map(c => [c.id, C.prepare(c)])); }
   catch (error) { notice('地图数据无法解析：' + error.message, true); return; }
   const fixed = (v, digits = 2) => v.toFixed(digits);
@@ -77,17 +77,30 @@
     }
   }
   function render(writeHash = true) {
+    limits = C.panBounds([byId[state.left], byId[state.right]], state.side);
+    state.offset = C.clampOffset(state.offset, limits);
     for (const slot of ['left', 'right']) {
-      const city = byId[state[slot]], result = C.analyze(prepared[city.id], state.side, state.walking); results[slot] = result;
+      const city = byId[state[slot]], result = C.analyze(prepared[city.id], state.side, state.walking, state.offset); results[slot] = result;
+      const [lon, lat] = C.unproject(...state.offset, city);
       $(slot + '-card').style.setProperty('--accent', city.color);
       $(slot + '-city').value = city.id; $(slot + '-country').textContent = city.country;
       $(slot + '-district').textContent = city.district; $(slot + '-english').textContent = city.english;
-      $(slot + '-coordinates').textContent = `${city.lat.toFixed(4)}° N  ${city.lon.toFixed(4)}° E`;
+      $(slot + '-coordinates').textContent = `${lat.toFixed(4)}° N  ${lon.toFixed(4)}° E`;
       $(slot + '-metrics').replaceChildren(metric('窗口内道路总长', fixed(result.lengthKm), 'km'), metric('路网密度', fixed(result.density, 1), 'km/km²'), metric('方向多样性', result.diversity === null ? '—' : fixed(result.diversity, 1), '/ 100'));
       $(slot + '-reading').textContent = describe(result);
       $(slot + '-map').setAttribute('aria-label', `${city.name}${city.district}，宽${state.side * 1000}米，道路总长${fixed(result.lengthKm)}公里`);
     }
     $('walking').checked = state.walking;
+    const [x, y] = state.offset, centered = x === 0 && y === 0;
+    $('center').disabled = centered;
+    $('position-label').textContent = centered ? '观察位置：样本中心' : `相对样本中心：${x >= 0 ? '东' : '西'} ${Math.abs(x * 1000).toFixed(1)} m · ${y >= 0 ? '北' : '南'} ${Math.abs(y * 1000).toFixed(1)} m`;
+    const atEdge = Math.abs(x - limits.minX) < 1e-6 || Math.abs(x - limits.maxX) < 1e-6 || Math.abs(y - limits.minY) < 1e-6 || Math.abs(y - limits.maxY) < 1e-6;
+    $('boundary-hint').textContent = atEdge ? '已到样本边界；缩小窗口可探索更多位置。' : '仅在已下载的样本内移动';
+    document.querySelectorAll('[data-pan]').forEach(button => {
+      const direction = button.dataset.pan.split(',').map(Number);
+      const next = C.clampOffset(state.offset.map((v, i) => v + direction[i] * state.side / 10), limits);
+      button.disabled = next.every((v, i) => v === state.offset[i]);
+    });
     document.querySelectorAll('[data-side]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.side) === state.side)));
     document.querySelectorAll('.window-label').forEach(label => { label.textContent = `${state.side * 1000} × ${state.side * 1000} m`; });
     $('area-label').textContent = `每侧 ${fixed(state.side * state.side, 4).replace(/0+$/, '').replace(/\.$/, '')} km²`;
@@ -99,11 +112,44 @@
     for (const city of cities) { const option = document.createElement('option'); option.value = city.id; option.textContent = city.name; select.append(option); }
     select.addEventListener('change', () => { state[slot] = select.value; render(); });
   }
-  document.querySelectorAll('[data-side]').forEach(button => button.addEventListener('click', () => { state.side = Number(button.dataset.side); render(); }));
+  document.querySelectorAll('[data-side]').forEach(button => button.addEventListener('click', () => {
+    const previous = state.offset; state.side = Number(button.dataset.side); render();
+    if (state.offset.some((v, i) => v !== previous[i])) notice('已调整观察位置，让更大的窗口完整落在样本内。');
+  }));
   $('walking').addEventListener('change', () => { state.walking = $('walking').checked; render(); });
   $('swap').addEventListener('click', () => { [state.left, state.right] = [state.right, state.left]; render(); });
   $('reset').addEventListener('click', () => { state = C.readState('', ids); render(); notice('已恢复默认双城观察。'); });
-  window.addEventListener('hashchange', () => { state = C.readState(location.hash, ids); render(false); });
+  function finishDrag(writeHash = true) {
+    cancelAnimationFrame(panFrame);
+    if (drag) { const old = drag; drag = null; old.canvas.classList.remove('dragging'); if (old.canvas.hasPointerCapture(old.id)) old.canvas.releasePointerCapture(old.id); render(writeHash); }
+  }
+  function shiftView(dx, dy) { finishDrag(); state.offset = [state.offset[0] + dx * state.side / 10, state.offset[1] + dy * state.side / 10]; render(); }
+  document.querySelectorAll('[data-pan]').forEach(button => button.addEventListener('click', () => shiftView(...button.dataset.pan.split(',').map(Number))));
+  $('center').addEventListener('click', () => { finishDrag(); state.offset = [0, 0]; render(); });
+  for (const slot of ['left', 'right']) {
+    const canvas = $(slot + '-map');
+    canvas.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || !event.isPrimary) return;
+      finishDrag(); canvas.focus({ preventScroll: true });
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, offset: [...state.offset], canvas, size: canvas.getBoundingClientRect().width };
+      canvas.setPointerCapture(event.pointerId); canvas.classList.add('dragging');
+    });
+    canvas.addEventListener('pointermove', event => {
+      if (!drag || drag.id !== event.pointerId || drag.canvas !== canvas) return;
+      const factor = state.side / drag.size;
+      state.offset = C.clampOffset([drag.offset[0] - (event.clientX - drag.x) * factor, drag.offset[1] + (event.clientY - drag.y) * factor], limits);
+      cancelAnimationFrame(panFrame); panFrame = requestAnimationFrame(() => render(false));
+    });
+    for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(name, event => { if (drag && event.pointerId === drag.id) finishDrag(); });
+    canvas.addEventListener('keydown', event => {
+      const keys = { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+      if (keys[event.key]) { event.preventDefault(); shiftView(...keys[event.key]); }
+      if (event.key === 'Home') { event.preventDefault(); finishDrag(); state.offset = [0, 0]; render(); }
+      if (event.key === 'Escape') finishDrag();
+    });
+  }
+  window.addEventListener('blur', finishDrag);
+  window.addEventListener('hashchange', () => { finishDrag(false); state = C.readState(location.hash, ids); render(false); });
   let resizeFrame; const observer = new ResizeObserver(() => { cancelAnimationFrame(resizeFrame); resizeFrame = requestAnimationFrame(paintMaps); });
   observer.observe($('left-map').parentElement); observer.observe($('right-map').parentElement);
   const dialog = $('about-dialog');
@@ -115,9 +161,36 @@
   function download(blob, name) {
     const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
+  const viewDialog = $('view-dialog');
+  function openView(code = '', manualCopy = false) {
+    finishDrag(); $('view-error').textContent = ''; $('view-code').value = code;
+    $('view-title').textContent = manualCopy ? '保存这份观察' : '恢复一份观察';
+    $('view-description').textContent = manualCopy ? '浏览器未能自动复制。请选中并复制下面的参数，在另一份城市纹理中使用“恢复视图”。' : '粘贴城市纹理生成的视图参数，恢复城市、尺度、筛选和观察位置。';
+    $('apply-view').hidden = manualCopy; viewDialog.showModal(); $('view-code').focus(); $('view-code').select();
+  }
+  $('close-view').addEventListener('click', () => viewDialog.close());
+  $('restore-view').addEventListener('click', () => openView());
+  $('copy-view').addEventListener('click', async () => {
+    finishDrag(); const code = C.stateHash(state);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      let timer;
+      try { await Promise.race([navigator.clipboard.writeText(code), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Copy timeout')), 1600); })]); }
+      finally { clearTimeout(timer); }
+      notice('已复制视图参数。在同版本预览中点“恢复视图”即可打开。');
+    } catch (_) { openView(code, true); }
+  });
+  $('view-form').addEventListener('submit', event => {
+    event.preventDefault();
+    try {
+      const restored = C.parseView($('view-code').value, ids), requested = restored.offset;
+      finishDrag(); state = restored; render(); viewDialog.close();
+      notice(state.offset.some((v, i) => v !== requested[i]) ? '已恢复比较，并将观察位置限制在样本范围内。' : '已恢复城市、尺度、筛选和观察位置。');
+    } catch (error) { $('view-error').textContent = error.message; }
+  });
   $('report').addEventListener('click', () => {
     const reports = ['left', 'right'].map(slot => C.report(byId[state[slot]], results[slot], state.walking));
-    download(new Blob([JSON.stringify({ version: 1, app: '城市纹理', appVersion: '0.1.0', createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含范围、口径和数据来源。');
+    download(new Blob([JSON.stringify({ version: 2, app: '城市纹理', appVersion: '0.2.0', view: C.stateHash(state), createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含范围、口径和数据来源。');
   });
   $('export').addEventListener('click', () => {
     const button = $('export'); button.disabled = true;
@@ -126,17 +199,17 @@
       ctx.fillStyle = '#f6f5ef'; ctx.fillRect(0, 0, 1600, 1200); ctx.fillStyle = '#253b34'; ctx.font = '36px "Microsoft YaHei",sans-serif'; ctx.fillText('城市纹理 / 双城观察卡', 60, 65);
       ctx.font = '17px "Microsoft YaHei",sans-serif'; ctx.fillStyle = '#758078'; ctx.fillText(`同尺度 ${state.side * 1000} × ${state.side * 1000} m · 统一朝北 · ${state.walking ? '含步行与骑行道路' : '机动车道路（含 service）'}`, 60, 106);
       ['left', 'right'].forEach((slot, index) => {
-        const city = byId[state[slot]], r = results[slot], x = 60 + index * 780;
+        const city = byId[state[slot]], r = results[slot], x = 60 + index * 780, [lon, lat] = C.unproject(...r.offsetKm, city);
         ctx.fillStyle = city.color; ctx.font = '30px "Microsoft YaHei",sans-serif'; ctx.fillText(city.name, x, 170);
         ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText(city.district, x, 203);
         ctx.save(); ctx.translate(x, 225); drawMap(ctx, 700, r, city.color); ctx.restore();
         ctx.fillStyle = city.color; ctx.font = '20px "Microsoft YaHei",sans-serif'; ctx.fillText(`道路 ${fixed(r.lengthKm)} km    密度 ${fixed(r.density, 1)} km/km²`, x, 965);
         ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText(`方向多样性 ${r.diversity === null ? '—' : fixed(r.diversity, 1)} / 100    抓取 ${date(city)} UTC`, x, 1000);
-        ctx.fillText(`中心 ${city.lat.toFixed(4)}°N, ${city.lon.toFixed(4)}°E`, x, 1030);
+        ctx.fillText(`中心 ${lat.toFixed(4)}°N, ${lon.toFixed(4)}°E`, x, 1030);
       });
       ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText('局部城区快照，不能代表全市；方向多样性不是城市品质评分。局部等距圆柱近似。', 60, 1090);
       ctx.fillText('© OpenStreetMap contributors · ODbL 1.0 · https://www.openstreetmap.org/copyright', 60, 1124);
-      ctx.fillText('程序：城市纹理 v0.1 · https://github.com/LouHC0814/city-texture', 60, 1158);
+      ctx.fillText('程序：城市纹理 v0.2 · https://github.com/LouHC0814/city-texture', 60, 1158);
       canvas.toBlob(blob => { button.disabled = false; if (!blob) { notice('生成图片失败，请下载数据报告。'); return; } download(blob, '城市纹理-双城观察卡.png'); notice('双城观察卡已生成。'); }, 'image/png');
     } catch (error) { button.disabled = false; notice('导出失败：' + error.message); }
   });

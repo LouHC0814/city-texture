@@ -57,11 +57,58 @@ test('格式校验拒绝非有限坐标和节点错位', () => {
   assert.throws(() => C.prepare({ lon: 0, lat: 0, roads: [{ points: [[0, 0]], nodes: [] }] }));
 });
 test('分享状态只接受已存在的城市与预设尺度', () => {
-  const ids = ['zurich', 'bern'], state = { left: 'bern', right: 'zurich', side: 0.25, walking: false };
+  const ids = ['zurich', 'bern'], state = { left: 'bern', right: 'zurich', side: 0.25, walking: false, offset: [0.123456, -0.0351] };
   assert.deepEqual(C.readState(C.stateHash(state), ids), state);
   const invalid = C.readState('#v=1&a=<img>&b=none&s=Infinity&w=yes', ids);
   assert.equal(invalid.left, 'zurich'); assert.equal(invalid.right, 'bern'); assert.equal(invalid.side, 0.75); assert.equal(invalid.walking, false);
   assert.deepEqual(C.readState('#v=999&a=bern', ids), C.readState('', ids));
+});
+test('平移后按新窗口裁剪，不把世界坐标直接作为画布坐标', () => {
+  const r = C.analyze([road([[0, 0], [1, 0]])], 0.5, false, [0.5, 0]);
+  close(r.lengthKm, 0.5); assert.deepEqual(r.offsetKm, [0.5, 0]); assert.deepEqual(r.segments[0].a, [-0.25, 0]); assert.deepEqual(r.segments[0].b, [0.25, 0]);
+  assert.throws(() => C.analyze([], 0.5, false, [Infinity, 0]));
+});
+test('平移、选择与 v1 旧视图兼容；无效位置不会进入计算', () => {
+  const ids = ['zurich', 'bern'];
+  const old = C.readState('#v=1&a=bern&b=zurich&s=0.5&w=0&x=100&y=100', ids); assert.deepEqual(old.offset, [0, 0]); assert.equal(old.left, 'bern');
+  const invalid = C.readState('#v=2&a=bern&b=zurich&s=1&w=1&x=NaN&y=1e300', ids); assert.deepEqual(invalid.offset, [0, 0]);
+});
+test('平移报告以实际位置为中心并保留投影原点', () => {
+  const city = { name: '测试', district: '测试', lat: 47, lon: 8, source: {} };
+  const r = C.report(city, C.analyze([], 0.25, false, [0.12, -0.07]), false);
+  assert.deepEqual(r.center, C.unproject(0.12, -0.07, city)); assert.deepEqual(r.projectionOrigin, [8, 47]);
+  assert.deepEqual(r.bounds[0], C.unproject(-0.005, -0.195, city)); assert.deepEqual(r.offsetKm, [0.12, -0.07]);
+});
+test('视图恢复接受参数和链接，拒绝未知城市、版本与坏数据', () => {
+  const ids = ['zurich', 'bern'], hash = '#v=2&a=bern&b=zurich&s=0.5&w=1&x=25.125&y=-10.000';
+  assert.deepEqual(C.parseView('https://example.com/app/' + hash, ids), C.readState(hash, ids));
+  assert.deepEqual(C.parseView('  ' + hash.slice(1) + '\n', ids).offset, [0.025125, -0.01]);
+  for (const value of ['', 'v=999&a=bern', 'v=2&a=none&b=bern&s=0.5&w=1&x=0&y=0', hash.replace('x=25.125', 'x=Infinity'), 'x'.repeat(2001)]) assert.throws(() => C.parseView(value, ids));
+});
+test('平移使用两份数据的共同有效框，放大窗口时向内约束位置', () => {
+  const city = require('../dist/data/zurich.js'), other = require('../dist/data/bern.js');
+  const small = C.panBounds([city, other], 0.25), large = C.panBounds([city, other], 1);
+  assert.ok(small.maxX > large.maxX && small.maxY > large.maxY);
+  const offset = C.clampOffset([100, -100], small); assert.deepEqual(offset, [small.maxX, small.minY]);
+  assert.deepEqual(C.clampOffset(offset, large), [large.maxX, large.minY]);
+  const narrower = { ...city, bbox: [city.lat - 0.002, city.lon - 0.002, city.lat + 0.002, city.lon + 0.002] };
+  assert.throws(() => C.panBounds([city, narrower], 1));
+});
+test('真实样本边缘上的每个观察窗口都落在两份下载框中', () => {
+  const cities = ['zurich', 'bern'].map(id => require(`../dist/data/${id}.js`));
+  for (const side of [0.25, 0.5, 0.75, 1]) {
+    const limits = C.panBounds(cities, side);
+    for (const requested of [[-100, -100], [-100, 100], [100, -100], [100, 100], [NaN, Infinity]]) {
+      const offset = C.clampOffset(requested, limits);
+      for (const city of cities) {
+        const r = C.report(city, C.analyze(C.prepare(city), side, true, offset), true), b = city.bbox;
+        assert.ok(r.bounds[0][0] >= b[1] && r.bounds[0][1] >= b[0] && r.bounds[1][0] <= b[3] && r.bounds[1][1] <= b[2]);
+        close(r.roadDensityKmPerKm2, r.roadLengthKm / r.areaKm2);
+      }
+      const restored = C.readState(C.stateHash({ left: 'zurich', right: 'bern', side, walking: true, offset }), cities.map(c => c.id));
+      assert.deepEqual(restored.offset, offset);
+    }
+  }
 });
 test('报告保留窗口坐标与来源，不输出绘制缓存', () => {
   const city = { name: '测试', district: '测试样本', lat: 0, lon: 0, source: { license: 'ODbL-1.0' } };
