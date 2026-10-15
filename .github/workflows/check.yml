@@ -1,0 +1,22 @@
+name: 检查
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    name: 几何与真实数据检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/core.test.cjs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: 原始数据离线重建
+        run: node scripts/verify-rebuild.cjs
+        env:
+          PYTHON_BIN: python
+      - run: node scripts/build-standalone.cjs
