@@ -8,9 +8,9 @@
 
 ## 直接下载使用（推荐）
 
-打开 **[最新 Release 下载页](https://github.com/LouHC0814/city-texture/releases/latest)**，在页面下方 **Assets** 下载 **城市纹理-v0.3.0-离线包.zip**。完整解压后，双击 **打开城市纹理.html**。
+打开 **[最新 Release 下载页](https://github.com/LouHC0814/city-texture/releases/latest)**，在页面下方 **Assets** 下载 **city-texture-v0.3.0-offline.zip**。完整解压后，双击 **打开城市纹理.html**。
 
-也可下载 **城市纹理-v0.3.0.html**，用 Chrome / Edge 打开。无需安装 Node.js、Python或其他依赖，断网可用。详细步骤见 [中文使用说明](docs/使用说明.md)。GitHub 自动提供的 Source code 是开发用源码包。
+也可下载 **city-texture-v0.3.0.html**，用 Chrome / Edge 打开。无需安装 Node.js、Python 或其他依赖，断网可用。详细步骤见 [中文使用说明](docs/使用说明.md)。GitHub 自动提供的 Source code 是开发用源码包。
 
 ## 当前做到哪里
 
