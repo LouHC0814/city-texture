@@ -1,0 +1,24 @@
+{
+  "zurich": {
+    "name": "OpenStreetMap contributors",
+    "license": "ODbL-1.0",
+    "url": "https://www.openstreetmap.org/copyright",
+    "endpoint": "https://overpass.osm.ch/api/interpreter",
+    "query": "[out:json][timeout:25];(way[\"building\"][\"building\"!=\"no\"](47.3690537,8.5341961,47.3789463,8.5488039);rel[\"type\"=\"multipolygon\"][\"building\"][\"building\"!=\"no\"](47.3690537,8.5341961,47.3789463,8.5488039););out geom;",
+    "snapshotToken": "117765",
+    "fetchedAt": "2026-10-16T06:03:22.042113+00:00",
+    "rawSha256": "d12561583aa522ddfcaccc9d9f7c97526c66cd99a5c5c6c54401cb727f02b46c",
+    "limitations": "建筑轮廓要素，不是独立楼栋或住房数量；不含仅标注 building:part 的要素，不做面积去重或覆盖率推断。"
+  },
+  "bern": {
+    "name": "OpenStreetMap contributors",
+    "license": "ODbL-1.0",
+    "url": "https://www.openstreetmap.org/copyright",
+    "endpoint": "https://overpass.osm.ch/api/interpreter",
+    "query": "[out:json][timeout:25];(way[\"building\"][\"building\"!=\"no\"](46.9430537,7.4401544,46.9529463,7.4546456);rel[\"type\"=\"multipolygon\"][\"building\"][\"building\"!=\"no\"](46.9430537,7.4401544,46.9529463,7.4546456););out geom;",
+    "snapshotToken": "117765",
+    "fetchedAt": "2026-10-16T06:03:26.773081+00:00",
+    "rawSha256": "07f617536a2a3a0d3eab0fd1f11d7f77c517a3152002a5e0513a6abed8e456b3",
+    "limitations": "建筑轮廓要素，不是独立楼栋或住房数量；不含仅标注 building:part 的要素，不做面积去重或覆盖率推断。"
+  }
+}

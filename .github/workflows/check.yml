@@ -19,4 +19,6 @@ jobs:
         run: node scripts/verify-rebuild.cjs
         env:
           PYTHON_BIN: python
+      - name: 建筑转换检查
+        run: python -m unittest discover -s tests -p test_buildings.py
       - run: node scripts/build-standalone.cjs
