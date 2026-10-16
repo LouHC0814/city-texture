@@ -6,6 +6,12 @@
 
 ![桌面实测截图](docs/桌面预览.png)
 
+## 直接下载使用（推荐）
+
+打开 **[最新 Release 下载页](https://github.com/LouHC0814/city-texture/releases/latest)**，在页面下方 **Assets** 下载 **城市纹理-v0.3.0-离线包.zip**。完整解压后，双击 **打开城市纹理.html**。
+
+也可下载 **城市纹理-v0.3.0.html**，用 Chrome / Edge 打开。无需安装 Node.js、Python或其他依赖，断网可用。详细步骤见 [中文使用说明](docs/使用说明.md)。GitHub 自动提供的 Source code 是开发用源码包。
+
 ## 当前做到哪里
 
 - 两个真实城区样本：苏黎世老城周边、伯尔尼老城周边，**均不代表整座城市**。
@@ -23,7 +29,7 @@
 
 ## 如何体验
 
-下载仓库 ZIP 并完整解压，用 Chrome 或 Edge 打开 `dist/index.html` 即可。不需要安装依赖。
+除了上面的 Release 成品，也可以下载仓库源码 ZIP 并完整解压，用 Chrome 或 Edge 打开 `dist/index.html`。不需要安装依赖。
 
 已有 Node.js 22 或更新版本时，也可以运行：
 
