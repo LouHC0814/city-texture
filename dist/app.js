@@ -5,11 +5,13 @@
   function notice(message, persistent = false) { clearTimeout(noticeTimer); $('status').textContent = message; if (!persistent) noticeTimer = setTimeout(() => { $('status').textContent = ''; }, 4500); }
   if (!C || cities.length < 2) { notice('城区数据加载失败。请完整解压项目后打开 dist/index.html，或使用单文件预览版。', true); return; }
   const ids = cities.map(c => c.id), byId = Object.fromEntries(cities.map(c => [c.id, c]));
-  let state = C.readState(location.hash, ids), prepared, results = {}, limits, drag = null, panFrame;
-  try { prepared = Object.fromEntries(cities.map(c => [c.id, C.prepare(c)])); }
+  const buildingData = Object.fromEntries((window.BUILDING_DATA || []).map(data => [data.cityId, data]));
+  let state = C.readState(location.hash, ids), prepared, preparedBuildings, results = {}, buildingResults = {}, limits, drag = null, panFrame;
+  try { prepared = Object.fromEntries(cities.map(c => [c.id, C.prepare(c)])); preparedBuildings = Object.fromEntries(cities.map(c => [c.id, C.prepareBuildings(c, buildingData[c.id])])); }
   catch (error) { notice('地图数据无法解析：' + error.message, true); return; }
   const fixed = (v, digits = 2) => v.toFixed(digits);
   const date = city => new Date(city.source.fetchedAt).toISOString().slice(0, 10);
+  const layerNames = { roads: '道路', both: '道路 + 建筑', buildings: '建筑' };
   const describe = r => {
     if (!r.lengthKm) return '当前筛选下没有道路。';
     const bin = r.bins.indexOf(Math.max(...r.bins)), start = bin * 10;
@@ -20,18 +22,31 @@
     canvas.width = Math.round(logicalSize * dpr); canvas.height = Math.round(logicalSize * dpr);
     const ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr); return ctx;
   }
-  function drawMap(ctx, size, result, color) {
+  function drawMap(ctx, size, result, color, footprints, layer) {
     ctx.save(); ctx.fillStyle = '#f2f3e8'; ctx.fillRect(0, 0, size, size);
     const scale = size / result.sideKm, mid = size / 2;
     ctx.strokeStyle = '#dfe3d5'; ctx.lineWidth = 0.55;
     for (let t = 1; t < 8; t++) { const p = size * t / 8; ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, size); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke(); }
+    if (layer !== 'roads') {
+      ctx.save(); ctx.beginPath(); ctx.rect(0, 0, size, size); ctx.clip(); ctx.fillStyle = color; ctx.strokeStyle = color;
+      for (const feature of footprints.features) {
+        ctx.beginPath();
+        for (const ring of [...feature.outers, ...feature.inners]) {
+          ring.forEach((p, index) => { const x = mid + (p[0] - result.offsetKm[0]) * scale, y = mid - (p[1] - result.offsetKm[1]) * scale; if (!index) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+          ctx.closePath();
+        }
+        ctx.globalAlpha = layer === 'buildings' ? 0.4 : 0.21; ctx.fill('evenodd');
+        ctx.globalAlpha = layer === 'buildings' ? 0.65 : 0.33; ctx.lineWidth = 0.5 * Math.max(0.75, size / 500); ctx.stroke();
+      }
+      ctx.restore();
+    }
     const groups = [
       { test: t => C.WALKING.has(t), width: 0.65, alpha: 0.4, dash: [2.2, 2.1] },
       { test: t => ['residential', 'unclassified', 'living_street', 'service'].includes(t), width: 1.05, alpha: 0.65, dash: [] },
       { test: t => C.DRIVING.has(t) && !['residential', 'unclassified', 'living_street', 'service'].includes(t), width: 2, alpha: 0.9, dash: [] }
     ];
     ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.strokeStyle = color;
-    for (const group of groups) {
+    for (const group of layer === 'buildings' ? [] : groups) {
       ctx.beginPath();
       for (const segment of result.segments) if (group.test(segment.type)) {
         ctx.moveTo(mid + segment.a[0] * scale, mid - segment.a[1] * scale);
@@ -72,15 +87,16 @@
   function paintMaps() {
     for (const slot of ['left', 'right']) {
       const canvas = $(slot + '-map'), size = canvas.parentElement.clientWidth;
-      drawMap(context(canvas, size), size, results[slot], byId[state[slot]].color);
+      drawMap(context(canvas, size), size, results[slot], byId[state[slot]].color, buildingResults[slot], state.layer);
       drawRose($(slot + '-rose'), results[slot], byId[state[slot]].color);
     }
   }
   function render(writeHash = true) {
-    limits = C.panBounds([byId[state.left], byId[state.right]], state.side);
+    limits = C.panBounds([byId[state.left], byId[state.right], ...[state.left, state.right].map(id => ({ ...byId[id], bbox: buildingData[id].bbox }))], state.side);
     state.offset = C.clampOffset(state.offset, limits);
     for (const slot of ['left', 'right']) {
       const city = byId[state[slot]], result = C.analyze(prepared[city.id], state.side, state.walking, state.offset); results[slot] = result;
+      buildingResults[slot] = C.analyzeBuildings(preparedBuildings[city.id], state.side, state.offset);
       const [lon, lat] = C.unproject(...state.offset, city);
       $(slot + '-card').style.setProperty('--accent', city.color);
       $(slot + '-city').value = city.id; $(slot + '-country').textContent = city.country;
@@ -88,9 +104,13 @@
       $(slot + '-coordinates').textContent = `${lat.toFixed(4)}° N  ${lon.toFixed(4)}° E`;
       $(slot + '-metrics').replaceChildren(metric('窗口内道路总长', fixed(result.lengthKm), 'km'), metric('路网密度', fixed(result.density, 1), 'km/km²'), metric('方向多样性', result.diversity === null ? '—' : fixed(result.diversity, 1), '/ 100'));
       $(slot + '-reading').textContent = describe(result);
-      $(slot + '-map').setAttribute('aria-label', `${city.name}${city.district}，宽${state.side * 1000}米，道路总长${fixed(result.lengthKm)}公里`);
+      $(slot + '-building-count').textContent = buildingResults[slot].featureCount.toLocaleString('zh-CN');
+      $(slot + '-card').querySelector('.map-tag').textContent = `${layerNames[state.layer]} / OSM`;
+      $(slot + '-map').setAttribute('aria-label', `${city.name}${city.district}，${layerNames[state.layer]}图层，宽${state.side * 1000}米，窗口内建筑轮廓${buildingResults[slot].featureCount}个要素`);
     }
     $('walking').checked = state.walking;
+    document.querySelectorAll('[data-layer]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.layer === state.layer)));
+    $('layer-description').textContent = state.layer === 'buildings' ? '仅显示建筑；下方路网指标仍按道路筛选独立计算。' : state.layer === 'roads' ? '仅显示道路；建筑要素数仍来自当前观察窗口。' : '叠加建筑轮廓，观察街区疏密；虚线为步行与骑行道路。';
     const [x, y] = state.offset, centered = x === 0 && y === 0;
     $('center').disabled = centered;
     $('position-label').textContent = centered ? '观察位置：样本中心' : `相对样本中心：${x >= 0 ? '东' : '西'} ${Math.abs(x * 1000).toFixed(1)} m · ${y >= 0 ? '北' : '南'} ${Math.abs(y * 1000).toFixed(1)} m`;
@@ -117,6 +137,7 @@
     if (state.offset.some((v, i) => v !== previous[i])) notice('已调整观察位置，让更大的窗口完整落在样本内。');
   }));
   $('walking').addEventListener('change', () => { state.walking = $('walking').checked; render(); });
+  document.querySelectorAll('[data-layer]').forEach(button => button.addEventListener('click', () => { finishDrag(); state.layer = button.dataset.layer; render(); }));
   $('swap').addEventListener('click', () => { [state.left, state.right] = [state.right, state.left]; render(); });
   $('reset').addEventListener('click', () => { state = C.readState('', ids); render(); notice('已恢复默认双城观察。'); });
   function finishDrag(writeHash = true) {
@@ -154,7 +175,8 @@
   observer.observe($('left-map').parentElement); observer.observe($('right-map').parentElement);
   const dialog = $('about-dialog');
   for (const city of cities) {
-    const p = document.createElement('p'); p.textContent = `${city.name}：抓取于 ${date(city)}（UTC）；接口快照标识 ${city.source.snapshotToken}。该标识不是日期。`; $('data-details').append(p);
+    const p = document.createElement('p'), buildings = buildingData[city.id];
+    p.textContent = `${city.name}：道路抓取 ${date(city)}，建筑抓取 ${date(buildings)}（UTC）。建筑 ${buildings.features.length} 个要素，含 ${buildings.conversion.relations} 个多边形关系、${buildings.conversion.innerRings} 个内环，跳过 ${buildings.conversion.skipped.length} 个无法转换的要素。道路/建筑接口快照标识 ${city.source.snapshotToken} / ${buildings.source.snapshotToken}，标识不是日期。`; $('data-details').append(p);
   }
   $('about').addEventListener('click', () => dialog.showModal()); $('close-dialog').addEventListener('click', () => dialog.close());
   dialog.addEventListener('click', e => { if (e.target === dialog && (e.clientX < dialog.getBoundingClientRect().left || e.clientX > dialog.getBoundingClientRect().right || e.clientY < dialog.getBoundingClientRect().top || e.clientY > dialog.getBoundingClientRect().bottom)) dialog.close(); });
@@ -165,7 +187,7 @@
   function openView(code = '', manualCopy = false) {
     finishDrag(); $('view-error').textContent = ''; $('view-code').value = code;
     $('view-title').textContent = manualCopy ? '保存这份观察' : '恢复一份观察';
-    $('view-description').textContent = manualCopy ? '浏览器未能自动复制。请选中并复制下面的参数，在另一份城市纹理中使用“恢复视图”。' : '粘贴城市纹理生成的视图参数，恢复城市、尺度、筛选和观察位置。';
+    $('view-description').textContent = manualCopy ? '浏览器未能自动复制。请选中并复制下面的参数，在另一份城市纹理中使用“恢复视图”。' : '粘贴城市纹理生成的视图参数，恢复城市、尺度、图层、筛选和观察位置。';
     $('apply-view').hidden = manualCopy; viewDialog.showModal(); $('view-code').focus(); $('view-code').select();
   }
   $('close-view').addEventListener('click', () => viewDialog.close());
@@ -185,31 +207,33 @@
     try {
       const restored = C.parseView($('view-code').value, ids), requested = restored.offset;
       finishDrag(); state = restored; render(); viewDialog.close();
-      notice(state.offset.some((v, i) => v !== requested[i]) ? '已恢复比较，并将观察位置限制在样本范围内。' : '已恢复城市、尺度、筛选和观察位置。');
+      notice(state.offset.some((v, i) => v !== requested[i]) ? '已恢复比较，并将观察位置限制在样本范围内。' : '已恢复城市、尺度、图层、筛选和观察位置。');
     } catch (error) { $('view-error').textContent = error.message; }
   });
   $('report').addEventListener('click', () => {
-    const reports = ['left', 'right'].map(slot => C.report(byId[state[slot]], results[slot], state.walking));
-    download(new Blob([JSON.stringify({ version: 2, app: '城市纹理', appVersion: '0.2.0', view: C.stateHash(state), createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含范围、口径和数据来源。');
+    const reports = ['left', 'right'].map(slot => ({ ...C.report(byId[state[slot]], results[slot], state.walking),
+      buildings: { featureCount: buildingResults[slot].featureCount, meaning: '与窗口有正面积交集的 OSM 轮廓要素，不等于独立楼栋或住房数量。', source: buildingData[state[slot]].source, skippedSourceFeatures: buildingData[state[slot]].conversion.skipped.length } }));
+    download(new Blob([JSON.stringify({ version: 3, app: '城市纹理', appVersion: '0.3.0', displayLayer: state.layer, view: C.stateHash(state), createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含道路与建筑的独立来源。');
   });
   $('export').addEventListener('click', () => {
     const button = $('export'); button.disabled = true;
     try {
       const canvas = document.createElement('canvas'); canvas.width = 1600; canvas.height = 1200; const ctx = canvas.getContext('2d');
       ctx.fillStyle = '#f6f5ef'; ctx.fillRect(0, 0, 1600, 1200); ctx.fillStyle = '#253b34'; ctx.font = '36px "Microsoft YaHei",sans-serif'; ctx.fillText('城市纹理 / 双城观察卡', 60, 65);
-      ctx.font = '17px "Microsoft YaHei",sans-serif'; ctx.fillStyle = '#758078'; ctx.fillText(`同尺度 ${state.side * 1000} × ${state.side * 1000} m · 统一朝北 · ${state.walking ? '含步行与骑行道路' : '机动车道路（含 service）'}`, 60, 106);
+      ctx.font = '17px "Microsoft YaHei",sans-serif'; ctx.fillStyle = '#758078'; ctx.fillText(`图层：${layerNames[state.layer]} · 同尺度 ${state.side * 1000} × ${state.side * 1000} m · 统一朝北 · 路网统计${state.walking ? '含步行与骑行道路' : '仅机动车道路（含 service）'}`, 60, 106);
       ['left', 'right'].forEach((slot, index) => {
         const city = byId[state[slot]], r = results[slot], x = 60 + index * 780, [lon, lat] = C.unproject(...r.offsetKm, city);
         ctx.fillStyle = city.color; ctx.font = '30px "Microsoft YaHei",sans-serif'; ctx.fillText(city.name, x, 170);
         ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText(city.district, x, 203);
-        ctx.save(); ctx.translate(x, 225); drawMap(ctx, 700, r, city.color); ctx.restore();
+        ctx.save(); ctx.translate(x, 225); drawMap(ctx, 700, r, city.color, buildingResults[slot], state.layer); ctx.restore();
         ctx.fillStyle = city.color; ctx.font = '20px "Microsoft YaHei",sans-serif'; ctx.fillText(`道路 ${fixed(r.lengthKm)} km    密度 ${fixed(r.density, 1)} km/km²`, x, 965);
-        ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText(`方向多样性 ${r.diversity === null ? '—' : fixed(r.diversity, 1)} / 100    抓取 ${date(city)} UTC`, x, 1000);
+        ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText(`方向多样性 ${r.diversity === null ? '—' : fixed(r.diversity, 1)} / 100    道路抓取 ${date(city)} UTC`, x, 1000);
         ctx.fillText(`中心 ${lat.toFixed(4)}°N, ${lon.toFixed(4)}°E`, x, 1030);
+        ctx.fillText(`建筑轮廓 ${buildingResults[slot].featureCount} 个要素（不是楼栋数） · 抓取 ${date(buildingData[city.id])}`, x, 1058);
       });
       ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText('局部城区快照，不能代表全市；方向多样性不是城市品质评分。局部等距圆柱近似。', 60, 1090);
       ctx.fillText('© OpenStreetMap contributors · ODbL 1.0 · https://www.openstreetmap.org/copyright', 60, 1124);
-      ctx.fillText('程序：城市纹理 v0.2 · https://github.com/LouHC0814/city-texture', 60, 1158);
+      ctx.fillText('程序：城市纹理 v0.3 · https://github.com/LouHC0814/city-texture', 60, 1158);
       canvas.toBlob(blob => { button.disabled = false; if (!blob) { notice('生成图片失败，请下载数据报告。'); return; } download(blob, '城市纹理-双城观察卡.png'); notice('双城观察卡已生成。'); }, 'image/png');
     } catch (error) { button.disabled = false; notice('导出失败：' + error.message); }
   });

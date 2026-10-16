@@ -57,7 +57,7 @@ test('格式校验拒绝非有限坐标和节点错位', () => {
   assert.throws(() => C.prepare({ lon: 0, lat: 0, roads: [{ points: [[0, 0]], nodes: [] }] }));
 });
 test('分享状态只接受已存在的城市与预设尺度', () => {
-  const ids = ['zurich', 'bern'], state = { left: 'bern', right: 'zurich', side: 0.25, walking: false, offset: [0.123456, -0.0351] };
+  const ids = ['zurich', 'bern'], state = { left: 'bern', right: 'zurich', side: 0.25, walking: false, offset: [0.123456, -0.0351], layer: 'both' };
   assert.deepEqual(C.readState(C.stateHash(state), ids), state);
   const invalid = C.readState('#v=1&a=<img>&b=none&s=Infinity&w=yes', ids);
   assert.equal(invalid.left, 'zurich'); assert.equal(invalid.right, 'bern'); assert.equal(invalid.side, 0.75); assert.equal(invalid.walking, false);
@@ -138,4 +138,57 @@ test('离线入口引用的文件都存在，且没有 CDN/在线地图依赖', 
     assert.ok(fs.existsSync(path.resolve(root, match[1])), match[1]);
   }
   assert.ok(!/<script[^>]+src="https?:/.test(html));
+});
+
+const square = (min, max) => [[min, min], [max, min], [max, max], [min, max], [min, min]];
+const footprint = (outers, inners = [], id = 'way/1') => ({ id, outers, inners,
+  bbox: [Math.min(...outers.flat().map(p => p[0])), Math.min(...outers.flat().map(p => p[1])), Math.max(...outers.flat().map(p => p[0])), Math.max(...outers.flat().map(p => p[1]))] });
+test('建筑裁剪覆盖包围整个窗口的轮廓，且不改变原始数据', () => {
+  const ring = square(-2, 2), copy = JSON.stringify(ring), clipped = C.clipRing(ring, 0.25);
+  close(C.ringArea(clipped), 0.25); assert.equal(JSON.stringify(ring), copy);
+  for (const p of clipped) assert.ok(p.every(v => Math.abs(v) <= 0.25));
+  assert.equal(C.analyzeBuildings([footprint([ring])], 0.5).featureCount, 1);
+});
+test('仅触碰建筑边界或完全在窗口外的轮廓不计数', () => {
+  assert.equal(C.analyzeBuildings([footprint([square(0.5, 1)])], 1).featureCount, 0);
+  assert.equal(C.analyzeBuildings([footprint([square(2, 3)])], 0.5).featureCount, 0);
+});
+test('窗口完全位于内院时不计建筑，移至外壳后计入', () => {
+  const building = footprint([square(-0.5, 0.5)], [square(-0.3, 0.3)]);
+  assert.equal(C.analyzeBuildings([building], 0.25).featureCount, 0);
+  assert.equal(C.analyzeBuildings([building], 0.25, [0.35, 0]).featureCount, 1);
+});
+test('凹多边形裁剪的正面积不使用包围框替代', () => {
+  const l = [[-0.5, -0.5], [0.5, -0.5], [0.5, -0.2], [-0.2, -0.2], [-0.2, 0.5], [-0.5, 0.5], [-0.5, -0.5]];
+  assert.equal(C.analyzeBuildings([footprint([l])], 0.25).featureCount, 0);
+  close(C.ringArea(C.clipRing(l, 0.5)), 0.51);
+});
+test('一个关系包含多片轮廓仍按一个 OSM 要素计数', () => {
+  const building = footprint([square(-0.4, -0.2), square(0.2, 0.4)], [], 'relation/1');
+  assert.equal(C.analyzeBuildings([building], 1).featureCount, 1);
+});
+test('建筑准备阶段拒绝未闭合坐标、重复 ID 与错误城区', () => {
+  const city = { id: 'sample', lon: 0, lat: 0 }, feature = { id: 'way/1', outers: [square(0, 0.001)], inners: [] };
+  assert.equal(C.prepareBuildings(city, { cityId: 'sample', features: [feature] }).length, 1);
+  assert.throws(() => C.prepareBuildings(city, { cityId: 'other', features: [feature] }));
+  assert.throws(() => C.prepareBuildings(city, { cityId: 'sample', features: [feature, feature] }));
+  assert.throws(() => C.prepareBuildings(city, { cityId: 'sample', features: [{ ...feature, outers: [[[0, 0], [1, 0], [0, 1]]] }] }));
+});
+test('图层视图支持 v3，v1/v2 保持仅道路，坏图层不可恢复', () => {
+  const ids = ['zurich', 'bern'];
+  for (const layer of ['roads', 'both', 'buildings']) {
+    const state = { ...C.readState('', ids), layer };
+    assert.deepEqual(C.parseView(C.stateHash(state), ids), state);
+  }
+  for (const v of ['1', '2']) assert.equal(C.readState(`#v=${v}&a=bern&b=zurich&s=0.5&w=1&x=10&y=0`, ids).layer, 'roads');
+  assert.throws(() => C.parseView('#v=3&a=bern&b=zurich&s=0.5&w=1&x=0&y=0&l=bad', ids));
+});
+for (const id of ['zurich', 'bern']) test(`真实建筑 ${id}：来源、内院、要素唯一与窗口变化`, () => {
+  const city = require(`../dist/data/${id}.js`), data = require(`../dist/data/${id}-buildings.js`), buildings = C.prepareBuildings(city, data);
+  assert.deepEqual(data.bbox, city.bbox); assert.equal(data.source.license, 'ODbL-1.0'); assert.match(data.source.rawSha256, /^[a-f0-9]{64}$/);
+  assert.ok(data.features.length > 100 && data.conversion.innerRings > 0 && data.conversion.relations > 0);
+  assert.equal(data.conversion.featureCount, data.features.length); assert.equal(new Set(buildings.map(b => b.id)).size, buildings.length);
+  let previous = 0;
+  for (const side of [0.25, 0.5, 0.75, 1]) { const n = C.analyzeBuildings(buildings, side).featureCount; assert.ok(n >= previous && n <= buildings.length); previous = n; }
+  assert.throws(() => C.analyzeBuildings(buildings, NaN));
 });
