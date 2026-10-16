@@ -22,3 +22,5 @@ jobs:
       - name: 建筑转换检查
         run: python -m unittest discover -s tests -p test_buildings.py
       - run: node scripts/build-standalone.cjs
+      - name: 发行包完整性检查
+        run: python scripts/打包发行版.py --commit "$GITHUB_SHA"

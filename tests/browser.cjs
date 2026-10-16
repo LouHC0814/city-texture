@@ -187,7 +187,8 @@ async function until(callback, label, timeout = 10000) {
     await cdp.evaluate("document.getElementById('export').click()");
     const pngName = await until(async () => (await fs.readdir(downloads)).find(n => n.endsWith('.png')), '观察卡 PNG');
     const png = await fs.readFile(path.join(downloads, pngName)); assert.equal(png.subarray(1, 4).toString(), 'PNG'); assert.equal(png.readUInt32BE(16), 1600); assert.equal(png.readUInt32BE(20), 1200);
-    const screenshotDir = path.join(repo, 'docs');
+    const screenshotDir = process.env.BROWSER_SCREENSHOT_DIR || path.join(repo, 'docs');
+    await fs.mkdir(screenshotDir, { recursive: true });
     async function screenshot(name) {
       await delay(150);
       const layout = await cdp.call('Page.getLayoutMetrics'); const height = Math.ceil(layout.cssContentSize.height);
@@ -213,7 +214,7 @@ async function until(callback, label, timeout = 10000) {
     await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await delay(80);
     assert.notDeepEqual((await checkMoved()).offset, touchBefore);
     await cdp.evaluate('scrollTo(0,0)'); await screenshot('手机预览.png');
-    const standalone = await build(); await cdp.call('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
+    const standalone = process.env.CITY_RELEASE_HTML || await build(); await cdp.call('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
     await navigate(pathToFileURL(standalone).href); assert.equal(await metric('left'), expected('zurich', 0.75, true));
     assert.ok(await buildingCount('left') > 100); await cdp.evaluate("document.querySelector('[data-layer=\"buildings\"]').click()"); assert.equal((await currentState()).layer, 'buildings');
     await cdp.evaluate("document.querySelector('[data-side=\"0.25\"]').click();document.querySelector('[data-pan=\"1,0\"]').click()"); await checkMoved();
