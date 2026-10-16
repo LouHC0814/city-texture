@@ -24,11 +24,12 @@ def package(commit: str, output: Path | None = None, node: str | None = None) ->
     executable = node or shutil.which("node")
     if not executable:
         raise ValueError("打包时需要 Node.js；使用发行版不需要安装它")
-    html_name = f"城市纹理-v{version}.html"
-    zip_name = f"城市纹理-v{version}-离线包.zip"
-    guide_name = f"使用说明-v{version}.md"
-    info_name = f"版本信息-v{version}.json"
-    checksum_name = f"校验值-v{version}.txt"
+    # GitHub 会改写非 ASCII 附件名；下载文件名保持稳定，包内入口和文档使用中文。
+    html_name = f"city-texture-v{version}.html"
+    zip_name = f"city-texture-v{version}-offline.zip"
+    guide_name = f"usage-v{version}.md"
+    info_name = f"version-v{version}.json"
+    checksum_name = f"SHA256SUMS-v{version}.txt"
     html_path = release_dir / html_name
     subprocess.run([executable, str(ROOT / "scripts" / "build-standalone.cjs"), str(html_path)], check=True)
     guide = (ROOT / "docs" / "使用说明.md").read_text(encoding="utf-8")
