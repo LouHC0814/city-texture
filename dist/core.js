@@ -171,6 +171,7 @@
     if (typeof text !== 'string' || text.length > 2000) throw new Error('视图参数无效或过长');
     const value = text.trim(), index = value.indexOf('#'), fragment = index >= 0 ? value.slice(index) : '#' + value;
     const p = new URLSearchParams(fragment.slice(1));
+    if (['1', '2', '3'].includes(p.get('v')) && (p.get('a') || p.get('b')) && (!ids.includes(p.get('a')) || !ids.includes(p.get('b')))) throw new Error('视图中的样本尚未加载，请先导入同一份样本包，再恢复视图');
     if (!['1', '2', '3'].includes(p.get('v')) || !ids.includes(p.get('a')) || !ids.includes(p.get('b')) || ![0.25, 0.5, 0.75, 1].includes(Number(p.get('s'))) || !['0', '1'].includes(p.get('w'))) throw new Error('请粘贴城市纹理生成的视图参数或链接');
     if (['2', '3'].includes(p.get('v')) && ['x', 'y'].some(k => !/^-?\d{1,6}(?:\.\d{1,3})?$/.test(p.get(k) || ''))) throw new Error('视图中的位置参数无效');
     if (p.get('v') === '3' && !['roads', 'both', 'buildings'].includes(p.get('l'))) throw new Error('视图中的图层参数无效');
