@@ -177,5 +177,6 @@ new ResizeObserver(() => { size(); }).observe($('landmark-stage'));
 document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); else requestRender(); });
 window.addEventListener('pagehide', stop);
 window.CityLandmarks = { getState: () => ({ active, loaded, failed, spinning, wireframe, view, renders,
+  visible: !document.hidden, controlState: controls?.state, pendingFrame: Boolean(frame),
   camera: camera?.position.toArray(), target: controls?.target.toArray(), triangles: data.triangles,
   contextLost: renderer?.getContext().isContextLost() ?? true }) };

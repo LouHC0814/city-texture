@@ -236,8 +236,10 @@ async function until(callback, label, timeout = 10000) {
     await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
     await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
     assert.notDeepEqual((await landmarkState()).camera, beforeOrbitKey);
-    await cdp.evaluate("document.getElementById('landmark-spin').click()"); const beforeSpin = (await landmarkState()).camera; await delay(250);
-    assert.equal((await landmarkState()).spinning, true); assert.notDeepEqual((await landmarkState()).camera, beforeSpin);
+    await cdp.evaluate("document.getElementById('landmark-spin').click()"); const beforeSpin = (await landmarkState()).camera;
+    assert.equal((await landmarkState()).spinning, true);
+    try { await until(async () => JSON.stringify((await landmarkState()).camera) !== JSON.stringify(beforeSpin), '自动旋转改变三维相机', 10000); }
+    catch (failure) { throw new Error(failure.message + '：' + JSON.stringify(await landmarkState())); }
     await cdp.evaluate("document.getElementById('landmark-spin').click();document.getElementById('landmark-wireframe').click()"); assert.equal((await landmarkState()).wireframe, true);
     await cdp.evaluate("document.getElementById('landmark-reset').click()"); assert.equal((await landmarkState()).wireframe, false); assert.equal((await landmarkState()).spinning, false);
     const landmarkDownloads = path.join(runtime, 'landmark-downloads'); await fs.mkdir(landmarkDownloads);
