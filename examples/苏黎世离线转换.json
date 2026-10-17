@@ -1,0 +1,52 @@
+{
+  "city": {
+    "id": "zurich-offline-demo",
+    "name": "苏黎世·导入示例",
+    "english": "ZÜRICH",
+    "district": "老城与利马特河周边",
+    "country": "瑞士",
+    "lat": 47.374,
+    "lon": 8.5415,
+    "color": "#27776c"
+  },
+  "roads": {
+    "file": "../data/snapshots/zurich.json.gz",
+    "bbox": [
+      47.369053737999515,
+      8.534196117142407,
+      47.37894626200049,
+      8.548803882857591
+    ],
+    "source": {
+      "name": "OpenStreetMap contributors",
+      "license": "ODbL-1.0",
+      "url": "https://www.openstreetmap.org/copyright",
+      "endpoint": "https://overpass.osm.ch/api/interpreter",
+      "query": "[out:json][timeout:25];way[highway](47.3690537,8.5341961,47.3789463,8.5488039);out geom;",
+      "snapshotToken": "117749",
+      "fetchedAt": "2026-10-15T13:29:27.696565+00:00",
+      "rawSha256": "25c9e7507591a17916bef801c499a12d30c90d59809ddc737e655b39df349026",
+      "limitations": "道路为 highway 白名单；步行道可切换。不含建筑。仅为小范围城区窗口，不代表全市。接口快照标识不一定是时间。"
+    }
+  },
+  "buildings": {
+    "file": "../data/snapshots/zurich-buildings.json.gz",
+    "bbox": [
+      47.369053737999515,
+      8.534196117142407,
+      47.37894626200049,
+      8.548803882857591
+    ],
+    "source": {
+      "name": "OpenStreetMap contributors",
+      "license": "ODbL-1.0",
+      "url": "https://www.openstreetmap.org/copyright",
+      "endpoint": "https://overpass.osm.ch/api/interpreter",
+      "query": "[out:json][timeout:25];(way[\"building\"][\"building\"!=\"no\"](47.3690537,8.5341961,47.3789463,8.5488039);rel[\"type\"=\"multipolygon\"][\"building\"][\"building\"!=\"no\"](47.3690537,8.5341961,47.3789463,8.5488039););out geom;",
+      "snapshotToken": "117765",
+      "fetchedAt": "2026-10-16T06:03:22.042113+00:00",
+      "rawSha256": "d12561583aa522ddfcaccc9d9f7c97526c66cd99a5c5c6c54401cb727f02b46c",
+      "limitations": "建筑轮廓要素，不是独立楼栋或住房数量；不含仅标注 building:part 的要素，不做面积去重或覆盖率推断。"
+    }
+  }
+}
