@@ -58,6 +58,8 @@ test('相机与目标必须是三元有限数值数组；过大、非有限、�
   }
 });
 
+// 短距离基础视图：camera→target=3，用于在不触发“远裁剪面小于相机到目标距离”规则的前提下测试 far 字段校验。
+const closeBase = { view: 'custom', camera: [3, 4, 0], target: [0, 4, 0], fov: 40, near: 0.1, far: 5 };
 test('FOV、near 与 far 各自有合理范围，far 必须大于 near', () => {
   for (const bad of [9, 91, NaN, Infinity, -10, '40', null]) {
     assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: { ...iso, fov: bad } }), /FOV/);
@@ -66,18 +68,34 @@ test('FOV、near 与 far 各自有合理范围，far 必须大于 near', () => {
     assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: { ...iso, near: bad } }), /near/);
   }
   for (const bad of [0, -1, 10001, NaN, '180']) {
-    assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: { ...iso, far: bad } }), /far/);
+    // 同样 far 值会先触发“远裁剪面小于相机到目标距离”（短距离 3 也无法绕过 0/-1），
+    // 测试断言同时接受两种拒绝消息：单纯越界 vs. 对当前距离而言过小。
+    assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: { ...closeBase, far: bad } }), /far|远裁剪面/);
   }
-  assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: { ...iso, near: 5, far: 4 } }), /far/);
+  assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: { ...closeBase, near: 5, far: 4 } }), /far/);
 });
 
-test('相机与目标重合被拒绝；远距离构图也被距离上限拦截', () => {
-  const same = { ...iso, camera: iso.target.slice() };
-  assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: same }), /重合/);
+test('相机与目标距离过近（重合及亚单位距离）被拒绝；远距离构图也被距离上限拦截', () => {
+  // 完全重合：distance=0，立刻被拒绝，避免目标点同时也是相机。
+  const coincident = { ...iso, camera: iso.target.slice() };
+  assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: coincident }), /视角相机过于接近观察目标/);
+  // 稍大于 0 但小于 1：仍然过近，相机几乎在观察目标点上，恢复后必然看到模型缺失或被裁。
+  const tooClose = { ...iso, camera: [iso.target[0] + 0.1, iso.target[1], iso.target[2]] };
+  assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: tooClose }), /视角相机过于接近观察目标/);
   const far = { view: 'custom', camera: [5001, 0, 0], target: [-5000, 0, 0], fov: 40, near: 0.1, far: 10000 };
   assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: far }), /距离/);
   const ok = V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: custom });
   assert.equal(ok.view.view, 'custom');
+});
+
+test('远裁剪面小于相机到目标距离被拒绝，确保模型在投影内完整可见', () => {
+  // camera-target ≈ 23.7，但 far 仅 10：模型显然会被裁掉。
+  const farTooShort = { view: 'custom', camera: [20, 8, 12], target: [0, 5.6, 0], fov: 40, near: 0.1, far: 10 };
+  assert.throws(() => V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: farTooShort }), /远裁剪面/);
+  // 同一距离，far 提升到 30：可以通过文件级校验，但运行时还需结合模型包围球再核一次。
+  const farComfortable = { view: 'custom', camera: [20, 8, 12], target: [0, 5.6, 0], fov: 40, near: 0.1, far: 30 };
+  const result = V.validateView({ format: V.FORMAT, version: 1, modelId: 'eiffel-tower', view: farComfortable });
+  assert.ok(result.view.far >= result.view.distance);
 });
 
 test('线框字段必须为布尔值；缺失时默认为 false', () => {

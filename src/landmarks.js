@@ -11,6 +11,14 @@ const MODEL_ID = 'eiffel-tower';
 const PRESET_NAMES = { iso: '立体视角', front: '正面', top: '俯视', custom: '自定义视角' };
 let active = false, loading = null, loaded = false, failed = false, spinning = false, frame = 0, renders = 0;
 let renderer, scene, camera, controls, model, environment, canvas, distance = 24, view = 'iso', wireframe = false;
+// 模型包围球半径（按放大后尺寸与居中后位置计算），用于运行时核对视角是否合理。
+let modelExtent = 0;
+// applyView() 设 true 后让 size() 跳过这次缩放，避免在恢复后被 OrbitControls 静默截断。
+let viewJustApplied = false;
+// 视角文件保存的距离上限：跨视口恢复时（例如移动端保存→桌面端打开），savedDistance 可能超过
+// 当前 size() 算出的 maxDistance；OrbitControls.update() 每帧都会把 spherical.radius 钳制到
+// [minDistance, maxDistance]，必须把 maxDistance 永久撑大，否则下一帧就把相机位置静默截回。
+let rememberedMaxDistance = 0;
 let glbBuffer;
 
 async function modelBytes() {
@@ -42,11 +50,14 @@ function size() {
   const halfFov = Math.min(THREE.MathUtils.degToRad(camera.fov / 2), Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect));
   const previousDistance = distance;
   distance = 7 / Math.sin(halfFov) * 1.13;
-  if (loaded && previousDistance) {
+  if (loaded && previousDistance && !viewJustApplied) {
     const offset = camera.position.clone().sub(controls.target).multiplyScalar(distance / previousDistance);
     camera.position.copy(controls.target).add(offset);
   }
-  controls.minDistance = 3; controls.maxDistance = distance * 3;
+  viewJustApplied = false;
+  // 若视角文件保存的距离比当前视口的最大距离大，则必须撑大 maxDistance。
+  // 否则下一次 OrbitControls.update() 会把 spherical.radius 静默截回。
+  controls.minDistance = 3; controls.maxDistance = Math.max(distance * 3, rememberedMaxDistance * 1.01);
   requestRender();
 }
 function angle(phi, theta, radius = camera.position.distanceTo(controls.target)) {
@@ -58,6 +69,11 @@ function angle(phi, theta, radius = camera.position.distanceTo(controls.target))
 function preset(name) {
   if (!loaded || failed) return;
   view = name; controls.target.set(0, 5.6, 0);
+  // 用户主动切换预设，把视角文件留下的 viewJustApplied 清掉，让后续拖动能再次标记为 custom。
+  // 同时把极角上下限恢复到正常范围（applyView 期间已临时放宽），避免用户绕过默认视角。
+  viewJustApplied = false;
+  controls.minPolarAngle = 0;
+  controls.maxPolarAngle = Math.PI / 2 - 0.015;
   angle(name === 'top' ? 0.035 : name === 'front' ? Math.PI / 2 : 1.08, name === 'front' ? 0 : Math.PI / 4, distance);
   document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === name)));
 }
@@ -109,6 +125,11 @@ async function init() {
     controls = new OrbitControls(camera, canvas); controls.enableDamping = true; controls.dampingFactor = 0.12;
     controls.maxPolarAngle = Math.PI / 2 - 0.015; controls.autoRotateSpeed = 0.7; controls.autoRotate = spinning;
     controls.addEventListener('change', requestRender); controls.addEventListener('start', () => { spin(false); });
+    // 用户拖动/平移/双指缩放结束后，相机不再匹配任何预设；标记为 custom 防止预览误称。
+    controls.addEventListener('end', () => {
+      if (viewJustApplied) return; view = 'custom';
+      document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === view)));
+    });
     const pmrem = new THREE.PMREMGenerator(renderer), room = new RoomEnvironment();
     environment = pmrem.fromScene(room, 0.04).texture; scene.environment = environment; room.dispose(); pmrem.dispose();
     scene.add(new THREE.HemisphereLight(0xdce8ff, 0xb5aa8e, 2.3));
@@ -123,6 +144,10 @@ async function init() {
     const scale = 12 / Math.max(dimensions.x, dimensions.y, dimensions.z);
     model.scale.multiplyScalar(scale); const scaled = new THREE.Box3().setFromObject(model), center = scaled.getCenter(new THREE.Vector3());
     model.position.sub(new THREE.Vector3(center.x, scaled.min.y, center.z));
+    // 重新计算一次包围盒以匹配最终位置；用半对角线作为模型包围球半径。
+    const finalBox = new THREE.Box3().setFromObject(model);
+    const finalSize = finalBox.getSize(new THREE.Vector3());
+    modelExtent = Math.sqrt((finalSize.x * finalSize.x + finalSize.y * finalSize.y + finalSize.z * finalSize.z)) / 2;
     model.traverse(object => { if (object.isMesh) { object.castShadow = true; object.receiveShadow = true; } }); scene.add(model);
     setWireframe(wireframe); loaded = true; $('landmark-stage').dataset.state = 'ready';
     $('landmark-controls').querySelectorAll('button,input').forEach(element => { element.disabled = false; });
@@ -137,9 +162,15 @@ async function init() {
       if (event.key.startsWith('Arrow')) {
         const phi = THREE.MathUtils.clamp(spherical.phi + (event.key === 'ArrowUp' ? -0.12 : event.key === 'ArrowDown' ? 0.12 : 0), 0.03, Math.PI / 2 - 0.02);
         angle(phi, spherical.theta + (event.key === 'ArrowLeft' ? -0.16 : event.key === 'ArrowRight' ? 0.16 : 0));
+        // 方向键、+/- 调整后已偏离最近一次预设；标记为 custom 防止预览误称。
+        view = 'custom';
+        document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === view)));
       } else if (event.key === 'Home') preset('iso');
       else if (event.key === ' ') spin(!wasSpinning);
-      else zoom(event.key === '-' ? 1.18 : 1 / 1.18);
+      else { zoom(event.key === '-' ? 1.18 : 1 / 1.18);
+        view = 'custom';
+        document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === view)));
+      }
     });
   } catch (failure) { error(failure.message || '浏览器未启用 WebGL 2'); }
 }
@@ -168,11 +199,37 @@ function describeView(result) {
 }
 function applyView(result) {
   if (!loaded || failed) throw new Error('模型未就绪，无法打开视角');
+  // 运行时核对：距离过近或裁剪面不够都会让模型消失；按文件级校验后再校一次。
+  const distance = result.view.distance;
+  if (distance < Math.max(1, modelExtent * 0.5)) throw new Error(`视角相机距离过近（${distance.toFixed(2)}），应不小于模型包围球半径的一半 ${(modelExtent * 0.5).toFixed(2)}`);
+  if (result.view.far < distance + modelExtent) throw new Error(`视角远裁剪面（${result.view.far}）过小，需要至少 ${(distance + modelExtent).toFixed(2)} 才能看到完整模型`);
+  // 1. 关闭自动旋转；2. 暂时禁用阻尼并 update() 以清空 OrbitControls 残留的旋转/平移增量。
   spin(false);
+  const previousDamping = controls.enableDamping;
+  controls.enableDamping = false; controls.update(); controls.enableDamping = previousDamping;
+  // 3. 临时放宽 OrbitControls 的缩放上下限与极角上下限，避免 update() 把保存位置
+  //    截到当前视口的最大/最小距离或最大俯仰角度（极角钳位会调整 theta 让相机绕回）。
+  const previousMin = controls.minDistance;
+  const previousMinPolar = controls.minPolarAngle;
+  const previousMaxPolar = controls.maxPolarAngle;
+  controls.minDistance = 0;
+  controls.maxDistance = Math.max(rememberedMaxDistance, distance) * 1.01;
+  controls.minPolarAngle = 0;
+  controls.maxPolarAngle = Math.PI;
   camera.position.set(result.view.camera[0], result.view.camera[1], result.view.camera[2]);
   controls.target.set(result.view.target[0], result.view.target[1], result.view.target[2]);
   camera.fov = result.view.fov; camera.near = result.view.near; camera.far = result.view.far;
   camera.updateProjectionMatrix(); controls.update();
+  // 4. 恢复缩放下限；maxDistance 与极角上下限都必须永久放宽以保留保存位置：
+  //    OrbitControls.update() 每帧把 spherical.radius 与 spherical.phi 钳到 [minDistance, maxDistance]
+  //    和 [minPolarAngle, maxPolarAngle]，恢复原限制会让保存的真实角度（恰好落在边界的 '正面' 视角）
+  //    被自动旋转回去。允许用户拖动经过极点换来保存视角逐帧稳定，是合理的取舍。
+  controls.minDistance = previousMin;
+  rememberedMaxDistance = Math.max(rememberedMaxDistance, distance);
+  controls.maxDistance = Math.max(distance * 3, rememberedMaxDistance * 1.01);
+  controls.minPolarAngle = 0;
+  controls.maxPolarAngle = Math.PI;
+  viewJustApplied = true;
   view = result.view.view;
   document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === view)));
   setWireframe(result.wireframe); $('landmark-wireframe').checked = result.wireframe;
@@ -205,6 +262,11 @@ $('view-file').addEventListener('change', async () => {
     const input = await file.text(); if (generation !== viewGeneration) return;
     const result = V.parseView(input);
     if (result.modelId !== MODEL_ID) throw new Error('视角对应的模型与当前展台不一致');
+    // 运行时核对：相机距离过近或远裁剪面不足都会让模型消失；按文件级校验后用真实模型包围球再校一次。
+    if (modelExtent > 0) {
+      if (result.view.distance < Math.max(1, modelExtent * 0.5)) throw new Error(`视角相机距离过近（${result.view.distance.toFixed(2)}），需要不小于模型包围球半径的一半 ${(modelExtent * 0.5).toFixed(2)}`);
+      if (result.view.far < result.view.distance + modelExtent) throw new Error(`视角远裁剪面（${result.view.far}）过小，需要至少 ${(result.view.distance + modelExtent).toFixed(2)} 才能显示完整模型`);
+    }
     viewStage = result;
     $('view-file-preview').textContent = describeView(result);
     $('apply-view-file').disabled = false;
@@ -222,7 +284,8 @@ document.querySelectorAll('[data-observation]').forEach(button => button.addEven
 }));
 document.querySelectorAll('[data-camera]').forEach(button => button.addEventListener('click', () => { spin(false); preset(button.dataset.camera); }));
 $('landmark-spin').addEventListener('click', () => spin(!spinning));
-$('landmark-in').addEventListener('click', () => zoom(1 / 1.18)); $('landmark-out').addEventListener('click', () => zoom(1.18));
+$('landmark-in').addEventListener('click', () => { zoom(1 / 1.18); view = 'custom'; document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === view))); });
+$('landmark-out').addEventListener('click', () => { zoom(1.18); view = 'custom'; document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === view))); });
 $('landmark-reset').addEventListener('click', () => { spin(false); $('landmark-wireframe').checked = false; setWireframe(false); preset('iso'); });
 $('landmark-wireframe').addEventListener('change', event => setWireframe(event.target.checked));
 $('landmark-retry').addEventListener('click', () => { dispose(); loading = init(); });

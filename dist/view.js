@@ -42,10 +42,12 @@
     checkTriple('观察目标', view.target);
     const dx = view.camera[0] - view.target[0], dy = view.camera[1] - view.target[1], dz = view.camera[2] - view.target[2];
     const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (distance < 1e-3) invalid('视角相机与观察目标重合，无法恢复构图');
+    if (distance < 1) invalid('视角相机过于接近观察目标，无法恢复构图');
     if (distance > 1e4) invalid('视角相机与目标距离超过 10000');
     checkNumber('FOV', view.fov, 10, 90);
     checkNumber('near', view.near, 1e-3, 10);
+    // 远裁剪面必须越过目标：相机到目标距离在目标之后都应可见，否则模型必然被裁掉。
+    if (view.far < distance) invalid('视角远裁剪面小于相机到观察目标距离，模型无法完整显示');
     checkNumber('far', view.far, view.near + 0.1, 10000);
     if (value.wireframe !== undefined && typeof value.wireframe !== 'boolean') invalid('视角线框字段必须是布尔值');
     return {

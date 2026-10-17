@@ -270,7 +270,22 @@ async function until(callback, label, timeout = 10000) {
     const savedViewFile = '城市纹理-三维视角.json';
     await cdp.evaluate("document.getElementById('save-view').click()");
     const viewPath = path.join(viewDownloads, savedViewFile);
-    await until(async () => (await fs.readdir(viewDownloads)).includes(savedViewFile), '三维视角 JSON 下载');
+    // 文件在 readdir 中出现不代表 Chrome 写完，setFileInputFiles 读到一半会触发
+    // "permission problems that have occurred after a reference to a file was acquired"。
+    // 等到连续 2 次（间隔 200ms）stat 大小一致且 handle 可打开，就认为下载稳定。
+    await until(async () => {
+      if (!(await fs.readdir(viewDownloads)).includes(savedViewFile)) return false;
+      try {
+        const s1 = await fs.stat(viewPath);
+        if (s1.size === 0) return false;
+        await new Promise(r => setTimeout(r, 200));
+        const s2 = await fs.stat(viewPath);
+        if (s1.size !== s2.size) return false;
+        const fh = await fs.open(viewPath, 'r');
+        await fh.close();
+        return true;
+      } catch (_) { return false; }
+    }, '三维视角 JSON 下载');
     const savedViewRaw = await fs.readFile(viewPath, 'utf8');
     const savedView = JSON.parse(savedViewRaw);
     assert.equal(savedView.format, 'city-texture-view'); assert.equal(savedView.version, 1);
@@ -287,7 +302,14 @@ async function until(callback, label, timeout = 10000) {
     assert.equal(await cdp.evaluate("document.getElementById('landmark-view-dialog').open"), true);
     const docForView = await cdp.call('DOM.getDocument'); const viewFileInput = await cdp.call('DOM.querySelector', { nodeId: docForView.root.nodeId, selector: '#view-file' });
     await cdp.call('DOM.setFileInputFiles', { nodeId: viewFileInput.nodeId, files: [viewPath] });
-    await until(() => cdp.evaluate("document.getElementById('apply-view-file').disabled === false"), '视角预览就绪');
+    // 视角文件很小，但第一个 until 偶尔被弹出对话框的 RAF 抢走调度。给 8 s 并在超时留证据。
+    try {
+      await until(() => cdp.evaluate("document.getElementById('apply-view-file').disabled === false"), '视角预览就绪', 8000);
+    } catch (e) {
+      const viewDbg2 = await cdp.evaluate("(function(){return { error: document.getElementById('view-file-error').textContent, applyDisabled: document.getElementById('apply-view-file').disabled, preview: document.getElementById('view-file-preview').textContent.length, fileName: document.getElementById('view-file').files[0] && document.getElementById('view-file').files[0].name };})()");
+      console.error('apply view first timeout debug:', JSON.stringify(viewDbg2));
+      throw e;
+    }
     const previewText = await cdp.evaluate("document.getElementById('view-file-preview').textContent");
     assert.ok(previewText.includes('正面'), `预览应描述保存的视角：${previewText}`);
     assert.equal(await cdp.evaluate("document.getElementById('view-file-error').textContent"), '');
@@ -330,6 +352,129 @@ async function until(callback, label, timeout = 10000) {
     await until(() => cdp.evaluate("document.getElementById('view-file-error').textContent.length > 0"), '比较项目被拒绝');
     await cdp.evaluate("document.getElementById('close-view-dialog').click()");
     assert.deepEqual(await landmarkState(), stateBeforeReject, '跨格式拒绝不改变当前镜头');
+    // P2-1：跨视口恢复——保存的视角距离超过当前 OrbitControls.maxDistance 时，恢复相机不能被静默截断。
+    // 沿真实保存视角的方向延长到 200 距离，避免触碰到 maxPolarAngle 后被极角自适应旋转。
+    const savedOffset = savedView.view.camera.map((v, i) => v - savedView.view.target[i]);
+    const savedLen = Math.hypot(...savedOffset);
+    const farDistance = 200; // 故意大于默认 maxDistance（≈21），保证旧的实现会把相机吸回 maxDistance。
+    const scaleFar = farDistance / savedLen;
+    const farOffset = savedOffset.map(v => v * scaleFar);
+    const farCamera = savedView.view.target.map((t, i) => t + farOffset[i]);
+    const farView = JSON.parse(JSON.stringify(savedView));
+    farView.view.camera = farCamera; farView.view.far = farDistance + 100; // 必须大于 distance 才能通过文件级远裁剪面检查。
+    const farViewPath = path.join(viewDownloads, 'far.json');
+    await fs.writeFile(farViewPath, JSON.stringify(farView));
+    await cdp.evaluate("document.getElementById('open-view').click()");
+    const docFar = await cdp.call('DOM.getDocument'); const farInput = await cdp.call('DOM.querySelector', { nodeId: docFar.root.nodeId, selector: '#view-file' });
+    await cdp.call('DOM.setFileInputFiles', { nodeId: farInput.nodeId, files: [farViewPath] });
+    await until(() => cdp.evaluate("document.getElementById('apply-view-file').disabled === false"), 'P2-1 远距离视角预览就绪');
+    await cdp.evaluate("document.getElementById('view-file-form').requestSubmit()");
+    await delay(50); // 立即采样相机位置，看 applyView 是否真的写入了 200
+    const snapImmediate = await landmarkState();
+    const snapImmediateDist = Math.hypot(...snapImmediate.camera.map((v, i) => v - snapImmediate.target[i]));
+    await delay(280); // 等若干帧后再检查：观察 OrbitControls/auto-rotate 后续影响
+    const snapAfter = await landmarkState();
+    const snapAfterDist = Math.hypot(...snapAfter.camera.map((v, i) => v - snapAfter.target[i]));
+    const farRecovered = snapAfter;
+    const farActual = snapAfterDist;
+    assert.ok(Math.abs(snapImmediateDist - farDistance) < 0.5, `P2-1 immediate 远距离恢复应保留 200，实际 ${snapImmediateDist.toFixed(2)}`);
+    assert.ok(Math.abs(farActual - farDistance) < 0.5, `P2-1：远距离恢复应保留保存的距离 200，实际 ${farActual.toFixed(2)}`);
+    // 浮点坐标经过 spherical/cartesian 转换会有舍入误差；用 1e-6 容差判断位置而不是 deepEqual。
+    for (let i = 0; i < 3; i++) {
+      assert.ok(Math.abs(farRecovered.camera[i] - farView.view.camera[i]) < 1e-6,
+        `P2-1：恢复相机第 ${i} 分量与保存值差异 ${Math.abs(farRecovered.camera[i] - farView.view.camera[i])} 超出 1e-6`);
+      assert.ok(Math.abs(farRecovered.target[i] - farView.view.target[i]) < 1e-6,
+        `P2-1：恢复观察目标第 ${i} 分量与保存值差异 ${Math.abs(farRecovered.target[i] - farView.view.target[i])} 超出 1e-6`);
+    }
+    await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+
+    // P2-2：距离过近和远裁剪面不够——两种无效组合必须在选择文件时就拒绝，应用按钮保持禁用。
+    const stateBeforeNear = await landmarkState();
+    const tooNear = JSON.parse(JSON.stringify(savedView));
+    tooNear.view.camera = savedView.view.target.slice(); // 相机与目标重合：distance=0，被文件级 < 1 拦截。
+    const tooNearPath = path.join(viewDownloads, 'too-near.json');
+    await fs.writeFile(tooNearPath, JSON.stringify(tooNear));
+    await cdp.evaluate("document.getElementById('open-view').click()");
+    const docNear = await cdp.call('DOM.getDocument'); const nearInput = await cdp.call('DOM.querySelector', { nodeId: docNear.root.nodeId, selector: '#view-file' });
+    await cdp.call('DOM.setFileInputFiles', { nodeId: nearInput.nodeId, files: [tooNearPath] });
+    await until(() => cdp.evaluate("document.getElementById('view-file-error').textContent.length > 0"), 'P2-2a 距离过近被拒绝');
+    assert.ok(/(过于接近|距离过近)/.test(await cdp.evaluate("document.getElementById('view-file-error').textContent")), 'P2-2a 应提示相机距离过近');
+    assert.equal(await cdp.evaluate("document.getElementById('apply-view-file').disabled"), true, 'P2-2a 应用按钮保持禁用');
+    await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+    assert.deepEqual(await landmarkState(), stateBeforeNear, 'P2-2a 错误视角不影响当前镜头');
+
+    const stateBeforeShort = await landmarkState();
+    const tooShortFar = JSON.parse(JSON.stringify(savedView));
+    tooShortFar.view.far = 1; // far << camera-target distance，必然被文件级校验拦截。
+    const tooShortFarPath = path.join(viewDownloads, 'too-short-far.json');
+    await fs.writeFile(tooShortFarPath, JSON.stringify(tooShortFar));
+    await cdp.evaluate("document.getElementById('open-view').click()");
+    const docShort = await cdp.call('DOM.getDocument'); const shortInput = await cdp.call('DOM.querySelector', { nodeId: docShort.root.nodeId, selector: '#view-file' });
+    await cdp.call('DOM.setFileInputFiles', { nodeId: shortInput.nodeId, files: [tooShortFarPath] });
+    await until(() => cdp.evaluate("document.getElementById('view-file-error').textContent.length > 0"), 'P2-2b 远裁剪面过小被拒绝');
+    assert.ok(/(远裁剪面)/.test(await cdp.evaluate("document.getElementById('view-file-error').textContent")), 'P2-2b 应提示远裁剪面不足');
+    assert.equal(await cdp.evaluate("document.getElementById('apply-view-file').disabled"), true, 'P2-2b 应用按钮保持禁用');
+    await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+    assert.deepEqual(await landmarkState(), stateBeforeShort, 'P2-2b 错误视角不影响当前镜头');
+
+    // P2-3：自动旋转残留的 OrbitControls 阻尼——保存的视角被恢复后位置仍等于保存值。
+    // 直接从当前相机状态构造基线视角文件，避免依赖 save-view 触发下载：
+    // 这样不依赖 Chrome 的下载时序，最稳健。
+    await cdp.evaluate("document.querySelector('[data-camera=iso]').click();document.getElementById('landmark-wireframe').checked=false;document.getElementById('landmark-wireframe').dispatchEvent(new Event('change'))");
+    await delay(220);
+    await delay(400); // 多等几帧，等 damping 完全衰减。
+    const isoState = await landmarkState();
+    const stableSave = {
+      format: 'city-texture-view', version: 1, modelId: 'eiffel-tower', wireframe: false,
+      view: {
+        view: isoState.view === 'custom' ? 'iso' : isoState.view,
+        camera: isoState.camera.slice(),
+        target: isoState.target.slice(),
+        fov: 40, near: 0.1, far: 180
+      }
+    };
+    // 让自动旋转与 OrbitControls 阻尼充分累积后再停下来。
+    await cdp.evaluate("document.getElementById('landmark-spin').click()"); assert.equal((await landmarkState()).spinning, true);
+    await delay(900);
+    await cdp.evaluate("document.getElementById('landmark-spin').click()"); assert.equal((await landmarkState()).spinning, false);
+    const stableViewPath = path.join(viewDownloads, 'stable-p23.json');
+    await fs.writeFile(stableViewPath, JSON.stringify(stableSave));
+    await cdp.evaluate("document.getElementById('open-view').click()");
+    const docSpin = await cdp.call('DOM.getDocument'); const spinInput = await cdp.call('DOM.querySelector', { nodeId: docSpin.root.nodeId, selector: '#view-file' });
+    await cdp.call('DOM.setFileInputFiles', { nodeId: spinInput.nodeId, files: [stableViewPath] });
+    await until(() => cdp.evaluate("document.getElementById('apply-view-file').disabled === false"), 'P2-3 阻尼残留视角预览就绪');
+    await cdp.evaluate("document.getElementById('view-file-form').requestSubmit()");
+    await delay(300);
+    const spinRecovered = await landmarkState();
+    // 浮点坐标经过 spherical/cartesian 转换会有舍入误差；用 1e-6 容差判断位置。
+    for (let i = 0; i < 3; i++) {
+      assert.ok(Math.abs(spinRecovered.camera[i] - stableSave.view.camera[i]) < 1e-6,
+        `P2-3：恢复相机第 ${i} 分量与保存值差异 ${Math.abs(spinRecovered.camera[i] - stableSave.view.camera[i])} 超出 1e-6`);
+      assert.ok(Math.abs(spinRecovered.target[i] - stableSave.view.target[i]) < 1e-6,
+        `P2-3：恢复目标第 ${i} 分量与保存值差异 ${Math.abs(spinRecovered.target[i] - stableSave.view.target[i])} 超出 1e-6`);
+    }
+    await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+
+    // 次要问题：拖动 / 平移 / 双指缩放 / 方向键 / +/- 后，预设立即变为 custom。
+    await cdp.evaluate("document.querySelector('[data-camera=iso]').click()");
+    await delay(120);
+    assert.equal((await landmarkState()).view, 'iso');
+    await dragLandmark(70, 20); assert.equal((await landmarkState()).view, 'custom', '拖动后预设变 custom');
+    await cdp.evaluate("document.querySelector('[data-camera=front]').click()"); await delay(120);
+    assert.equal((await landmarkState()).view, 'front');
+    await dragLandmark(60, 0); assert.equal((await landmarkState()).view, 'custom', '平移后预设变 custom');
+    await cdp.evaluate("document.querySelector('[data-camera=top]').click()"); await delay(120);
+    await cdp.evaluate("document.getElementById('landmark-canvas').focus()");
+    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    assert.equal((await landmarkState()).view, 'custom', '方向键调整后预设变 custom');
+    await cdp.evaluate("document.querySelector('[data-camera=iso]').click()"); await delay(120);
+    await cdp.evaluate("document.getElementById('landmark-in').click()");
+    assert.equal((await landmarkState()).view, 'custom', '+ 缩放后预设变 custom');
+    await cdp.evaluate("document.querySelector('[data-camera=iso]').click()"); await delay(120);
+    await cdp.evaluate("document.getElementById('landmark-out').click()");
+    assert.equal((await landmarkState()).view, 'custom', '- 缩放后预设变 custom');
+
     // 退出三维模式前恢复 iso 视角，便于后续浏览器检查继续运行。
     await cdp.evaluate("document.querySelector('[data-camera=iso]').click();document.getElementById('landmark-wireframe').click()");
     await cdp.evaluate("document.querySelector('[data-observation=map]').click()");
@@ -387,7 +532,18 @@ async function until(callback, label, timeout = 10000) {
     async function chooseProject(file) {
       if (!await cdp.evaluate("document.getElementById('project-dialog').open")) await cdp.evaluate("document.getElementById('open-project').click()");
       await setFile('#project-file', file);
-      await until(() => cdp.evaluate("!document.getElementById('apply-project').disabled || document.getElementById('project-error').textContent.length>0"), '比较项目校验完成');
+      // 提前 300ms 抽样，超时也保留证据：项目文件 3.7 MB，校验需调用 C.prepare/C.prepareBuildings，
+      // 默认 until(10 s) 在 3 段 chooseProject 连发时偶发不返回；这里给到 15 s 并在错误时打印。
+      await delay(300);
+      const projProbe = await cdp.evaluate("(function(){return { error: document.getElementById('project-error').textContent, applyDisabled: document.getElementById('apply-project').disabled, fileName: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].name, fileSize: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].size, dialogOpen: document.getElementById('project-dialog').open };})()");
+      console.error('chooseProject probe:', JSON.stringify(projProbe));
+      try {
+        await until(() => cdp.evaluate("!document.getElementById('apply-project').disabled || document.getElementById('project-error').textContent.length>0"), '比较项目校验完成', 15000);
+      } catch (e) {
+        const dbgAfter = await cdp.evaluate("(function(){return { error: document.getElementById('project-error').textContent, applyDisabled: document.getElementById('apply-project').disabled, fileName: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].name, dialogOpen: document.getElementById('project-dialog').open };})()");
+        console.error('chooseProject timeout debug:', JSON.stringify(dbgAfter));
+        throw e;
+      }
     }
     async function applyProject() {
       assert.equal(await cdp.evaluate("document.getElementById('apply-project').disabled"), false);
