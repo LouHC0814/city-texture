@@ -69,8 +69,13 @@ async function until(callback, label, timeout = 10000) {
     assert.equal((await fetch(address)).status, 200); assert.equal((await fetch(address + '/missing')).status, 404);
     const profile = path.join(runtime, 'profile');
     browser = spawn(executable, ['--headless=new', '--disable-gpu', ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    let browserError; browser.once('error', error => { browserError = error; });
     browser.stderr.on('data', data => { logs = (logs + data).slice(-8000); });
-    const port = await until(async () => { try { return Number((await fs.readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); } catch (_) { return false; } }, '浏览器启动');
+    const port = await until(async () => {
+      if (browserError) throw browserError;
+      if (browser.exitCode !== null) throw new Error(`浏览器在调试端口就绪前退出，代码 ${browser.exitCode}`);
+      try { return Number((await fs.readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); } catch (_) { return false; }
+    }, '浏览器启动', 30000);
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); cdp = new CDP(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
     await cdp.call('Page.enable'); await cdp.call('Runtime.enable'); await cdp.call('Network.enable');
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
@@ -254,6 +259,18 @@ async function until(callback, label, timeout = 10000) {
     assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 2); assert.equal((await currentState()).left, 'zurich');
     await cdp.evaluate("document.getElementById('close-samples').click();document.getElementById('reset').click()");
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
+    if (process.env.CITY_CONVERTED_SAMPLE) {
+      const convertedPath = path.resolve(process.env.CITY_CONVERTED_SAMPLE);
+      const converted = S.parseSample(await fs.readFile(convertedPath, 'utf8'));
+      await cdp.evaluate("document.getElementById('samples').click()"); await submitSample(convertedPath);
+      const view = await currentState(); assert.equal(view.left, converted.city.id);
+      assert.equal(await metric('left'), C.analyze(C.prepare(converted.city), view.side, view.walking, view.offset).lengthKm.toFixed(2));
+      assert.equal(await buildingCount('left'), C.analyzeBuildings(C.prepareBuildings(converted.city, converted.buildings), view.side, view.offset).featureCount);
+      assert.ok(await cdp.evaluate(`document.getElementById('data-details').textContent.includes(${JSON.stringify(converted.city.source.rawSha256)})`));
+      await cdp.evaluate(`Array.from(document.querySelectorAll('#sample-list button')).find(b=>b.getAttribute('aria-label')===${JSON.stringify('移除' + converted.city.name + '样本')}).click();document.getElementById('close-samples').click();document.getElementById('reset').click()`);
+      assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 2);
+      console.log('原始 Overpass 离线转换产物已通过实际文件选择导入，几何统计、来源与移除均正确。');
+    }
     await cdp.evaluate("document.querySelector('[data-layer=\"buildings\"]').click()"); await screenshot('建筑图层预览.png');
     await cdp.evaluate("document.querySelector('[data-layer=\"both\"]').click()");
     for (const slot of ['left', 'right']) {

@@ -48,7 +48,9 @@ jobs:
         run: node scripts/verify-rebuild.cjs
         env:
           PYTHON_BIN: python
-      - run: python -m unittest discover -s tests -p test_buildings.py
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - name: 离线转换真实快照为待导入样本
+        run: python scripts/转换城区样本.py --config examples/苏黎世离线转换.json --output .runtime/苏黎世-导入示例.json
       - name: 构建发行包
         run: python scripts/打包发行版.py --commit "$GITHUB_SHA"
       - name: 安装中文截图字体
@@ -58,6 +60,7 @@ jobs:
         env:
           CITY_RELEASE_HTML: ${{ github.workspace }}/.runtime/releases/v${{ steps.version.outputs.version }}/city-texture-v${{ steps.version.outputs.version }}.html
           BROWSER_SCREENSHOT_DIR: .runtime/release-screenshots
+          CITY_CONVERTED_SAMPLE: .runtime/苏黎世-导入示例.json
       - uses: actions/upload-artifact@v4
         with:
           name: city-texture-v${{ steps.version.outputs.version }}

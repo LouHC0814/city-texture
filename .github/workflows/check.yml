@@ -19,8 +19,8 @@ jobs:
         run: node scripts/verify-rebuild.cjs
         env:
           PYTHON_BIN: python
-      - name: 建筑转换检查
-        run: python -m unittest discover -s tests -p test_buildings.py
+      - name: 建筑与样本包转换检查
+        run: python -m unittest discover -s tests -p 'test_*.py'
       - run: node scripts/build-standalone.cjs
       - name: 发行包完整性检查
         run: python scripts/打包发行版.py --commit "$GITHUB_SHA"
@@ -32,11 +32,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: 离线转换真实快照为待导入样本
+        run: python scripts/转换城区样本.py --config examples/苏黎世离线转换.json --output .runtime/苏黎世-导入示例.json
       - name: 安装中文截图字体
         run: sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
       - run: npm run test:browser
         env:
           BROWSER_SCREENSHOT_DIR: .runtime/screenshots
+          CITY_CONVERTED_SAMPLE: .runtime/苏黎世-导入示例.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
