@@ -1,7 +1,7 @@
 // 生成可直接双击打开的单文件；数据随页面保存，没有 CDN 或在线接口依赖。
 const fs = require('node:fs/promises');
 const path = require('node:path');
-async function build(output = path.resolve(__dirname, '../.runtime/城市纹理-第五阶段预览.html')) {
+async function build(output = path.resolve(__dirname, '../.runtime/城市纹理-第六阶段预览.html')) {
   const root = path.resolve(__dirname, '../dist');
   let html = await fs.readFile(path.join(root, 'index.html'), 'utf8');
   html = html.replace('href="./index.html"', 'href="#"');
