@@ -68,7 +68,7 @@ async function until(callback, label, timeout = 10000) {
   try {
     assert.equal((await fetch(address)).status, 200); assert.equal((await fetch(address + '/missing')).status, 404);
     const profile = path.join(runtime, 'profile');
-    browser = spawn(executable, ['--headless=new', '--disable-gpu', ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    browser = spawn(executable, ['--headless=new', ...(process.env.CITY_BROWSER_SOFTWARE_GL === '1' ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []), ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
     let browserError; browser.once('error', error => { browserError = error; });
     browser.stderr.on('data', data => { logs = (logs + data).slice(-8000); });
     const port = await until(async () => {
@@ -185,7 +185,7 @@ async function until(callback, label, timeout = 10000) {
     const reportName = await until(async () => (await fs.readdir(downloads)).find(n => n.endsWith('.json')), '数据报告');
     const report = JSON.parse(await fs.readFile(path.join(downloads, reportName), 'utf8'));
     assert.equal(report.samples[0].city, '苏黎世'); assert.equal(report.samples[0].sideKm, 0.75); assert.equal(report.samples[1].source.license, 'ODbL-1.0');
-    assert.equal(report.appVersion, '0.6.0'); assert.equal(report.displayLayer, 'both'); assert.ok(report.samples[0].center[0] > require('../dist/data/zurich.js').lon);
+    assert.equal(report.appVersion, '0.7.0'); assert.equal(report.displayLayer, 'both'); assert.ok(report.samples[0].center[0] > require('../dist/data/zurich.js').lon);
     assert.equal(report.samples[0].buildings.featureCount, await buildingCount('left')); assert.equal(report.samples[1].buildings.source.license, 'ODbL-1.0');
     assert.notEqual(report.samples[0].source.fetchedAt, report.samples[0].buildings.source.fetchedAt);
     assert.deepEqual(report.samples[0].offsetKm, (await currentState()).offset); assert.deepEqual(report.samples[0].offsetKm, report.samples[1].offsetKm);
@@ -201,6 +201,64 @@ async function until(callback, label, timeout = 10000) {
       await fs.writeFile(path.join(screenshotDir, name), Buffer.from(shot.data, 'base64'));
     }
     await cdp.evaluate("document.getElementById('status').textContent=''"); await screenshot('桌面预览.png');
+    const landmarkState = () => cdp.evaluate('window.CityLandmarks.getState()');
+    async function openLandmark() {
+      await cdp.evaluate("document.querySelector('[data-observation=landmark]').click()");
+      await until(async () => (await landmarkState()).loaded, 'WebGL 三维建筑完成渲染', 30000);
+      await until(async () => (await landmarkState()).renders > 0, '三维真实画布'); await delay(150);
+    }
+    async function landmarkPixels() {
+      return cdp.evaluate("(()=>{const c=document.getElementById('landmark-canvas'),g=c.getContext('webgl2'),p=new Uint8Array(c.width*c.height*4);g.readPixels(0,0,c.width,c.height,g.RGBA,g.UNSIGNED_BYTE,p);let n=0;for(let i=0;i<p.length;i+=4)if(p[i]<170&&p[i+1]<170&&p[i+2]<170&&p[i+3]>0)n++;return n;})()");
+    }
+    async function dragLandmark(dx, dy) {
+      await cdp.evaluate("document.getElementById('landmark-canvas').scrollIntoView({block:'center'})");
+      const p = await cdp.evaluate("(()=>{const r=document.getElementById('landmark-canvas').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()");
+      await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, ...p });
+      await cdp.call('Input.dispatchMouseEvent', { type: 'mouseMoved', button: 'left', buttons: 1, x: p.x + dx, y: p.y + dy });
+      await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: p.x + dx, y: p.y + dy }); await delay(200);
+    }
+    const mapBefore3d = await cdp.evaluate('location.hash');
+    await openLandmark(); assert.equal((await landmarkState()).triangles, 147604); assert.equal((await landmarkState()).contextLost, false);
+    assert.ok(await landmarkPixels() > 2000, 'WebGL 实际绘出钢架像素，不能只检查界面按钮');
+    await cdp.evaluate('scrollTo(0,0)'); await screenshot('经典建筑3D预览.png');
+    const cameraBefore = (await landmarkState()).camera; await dragLandmark(85, 25); assert.notDeepEqual((await landmarkState()).camera, cameraBefore);
+    const images3d = [];
+    for (const camera of ['front', 'top', 'iso']) {
+      await cdp.evaluate(`document.querySelector('[data-camera=${camera}]').click()`); await delay(120);
+      assert.equal((await landmarkState()).view, camera); images3d.push(await cdp.evaluate("document.getElementById('landmark-canvas').toDataURL()"));
+    }
+    assert.equal(new Set(images3d).size, 3, '三种视角生成不同的模型画面');
+    const cameraDistance = s => Math.hypot(...s.camera.map((v, i) => v - s.target[i]));
+    const distanceBefore = cameraDistance(await landmarkState()); await cdp.evaluate("document.getElementById('landmark-in').click()");
+    assert.ok(cameraDistance(await landmarkState()) < distanceBefore);
+    await cdp.evaluate("document.getElementById('landmark-canvas').focus()");
+    const beforeOrbitKey = (await landmarkState()).camera;
+    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 });
+    assert.notDeepEqual((await landmarkState()).camera, beforeOrbitKey);
+    await cdp.evaluate("document.getElementById('landmark-spin').click()"); const beforeSpin = (await landmarkState()).camera; await delay(250);
+    assert.equal((await landmarkState()).spinning, true); assert.notDeepEqual((await landmarkState()).camera, beforeSpin);
+    await cdp.evaluate("document.getElementById('landmark-spin').click();document.getElementById('landmark-wireframe').click()"); assert.equal((await landmarkState()).wireframe, true);
+    await cdp.evaluate("document.getElementById('landmark-reset').click()"); assert.equal((await landmarkState()).wireframe, false); assert.equal((await landmarkState()).spinning, false);
+    const landmarkDownloads = path.join(runtime, 'landmark-downloads'); await fs.mkdir(landmarkDownloads);
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: landmarkDownloads });
+    await cdp.evaluate("document.getElementById('landmark-download').click();document.getElementById('landmark-export').click()");
+    const modelName = 'eiffel-tower-SDC-CC-BY-4.0.glb', modelCard = '城市纹理-埃菲尔铁塔3D.png';
+    await until(async () => (await fs.readdir(landmarkDownloads)).includes(modelName) && (await fs.readdir(landmarkDownloads)).includes(modelCard), '三维 GLB 与署名观察卡下载');
+    const modelBytes = await fs.readFile(path.join(landmarkDownloads, modelName));
+    assert.equal(require('node:crypto').createHash('sha256').update(modelBytes).digest('hex'), require('../dist/data/landmark-eiffel.js').glbSha256);
+    const modelPng = await fs.readFile(path.join(landmarkDownloads, modelCard)); assert.equal(modelPng.readUInt32BE(16), 1600); assert.equal(modelPng.readUInt32BE(20), 1200);
+    await fs.copyFile(path.join(landmarkDownloads, modelCard), path.join(screenshotDir, '经典建筑3D观察卡.png'));
+    await cdp.evaluate("document.getElementById('landmark-canvas').getContext('webgl2').getExtension('WEBGL_lose_context').loseContext()");
+    await until(async () => (await landmarkState()).failed, '图形上下文丢失提示');
+    await cdp.evaluate("window.__getContext=HTMLCanvasElement.prototype.getContext;HTMLCanvasElement.prototype.getContext=function(type,options){return type==='webgl2'?null:window.__getContext.call(this,type,options);};document.getElementById('landmark-retry').click()");
+    await until(() => cdp.evaluate("document.getElementById('landmark-status').textContent.includes('Error creating WebGL context')"), '不支持 WebGL 时正常显示失败提示');
+    await cdp.evaluate("HTMLCanvasElement.prototype.getContext=window.__getContext;document.getElementById('landmark-retry').click()");
+    await until(async () => (await landmarkState()).loaded, '失败后重新创建三维图形上下文', 30000);
+    await cdp.evaluate("document.querySelector('[data-observation=map]').click()");
+    assert.equal(await cdp.evaluate('location.hash'), mapBefore3d); await checkMoved();
+    const stoppedRenders = (await landmarkState()).renders; await delay(120); assert.equal((await landmarkState()).renders, stoppedRenders, '隐藏三维模式时停止绘制');
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
     // 新的真实南京样本必须经过真实选择、移动、恢复和下载，不能只靠 Node 读取数据。
     assert.deepEqual(await cdp.evaluate("Array.from(document.getElementById('left-city').options,o=>o.value)"), ['zurich', 'bern', 'nanjing']);
     await cdp.evaluate("document.getElementById('left-city').value='nanjing';document.getElementById('left-city').dispatchEvent(new Event('change'));document.getElementById('right-city').value='zurich';document.getElementById('right-city').dispatchEvent(new Event('change'))");
@@ -396,6 +454,21 @@ async function until(callback, label, timeout = 10000) {
     assert.equal(await cdp.evaluate("document.getElementById('project-dialog').scrollWidth<=document.getElementById('project-dialog').clientWidth"), true);
     await screenshot('比较项目手机预览.png'); await cdp.evaluate("document.getElementById('close-project').click()");
     await cdp.call('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await openLandmark(); assert.equal(await cdp.evaluate('document.documentElement.scrollWidth<=innerWidth'), true);
+    await cdp.evaluate("document.getElementById('landmark-canvas').scrollIntoView({block:'center'})");
+    const lp = await cdp.evaluate("(()=>{const r=document.getElementById('landmark-canvas').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()");
+    const touchCamera = (await landmarkState()).camera;
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: lp.x, y: lp.y }] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: lp.x + 45, y: lp.y - 10 }] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await delay(180);
+    assert.notDeepEqual((await landmarkState()).camera, touchCamera);
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: lp.x - 35, y: lp.y }, { x: lp.x + 35, y: lp.y }] });
+    const pinchBefore = cameraDistance(await landmarkState());
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: lp.x - 60, y: lp.y }, { x: lp.x + 60, y: lp.y }] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await delay(180);
+    assert.ok(cameraDistance(await landmarkState()) < pinchBefore, '双指扩大间距会拉近三维模型');
+    await cdp.evaluate('scrollTo(0,0)'); await screenshot('经典建筑3D手机预览.png');
+    await cdp.evaluate("document.querySelector('[data-observation=map]').click()");
     await cdp.evaluate("document.getElementById('left-map').scrollIntoView({block:'center'})");
     const touchRect = await cdp.evaluate("(()=>{const r=document.getElementById('left-map').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()");
     const touchBefore = (await currentState()).offset;
@@ -419,10 +492,12 @@ async function until(callback, label, timeout = 10000) {
     assert.ok(await cdp.evaluate("document.getElementById('sample-message').textContent.includes('加入左侧')"));
     await cdp.evaluate("document.getElementById('close-samples').click()");
     await chooseProject(customProjectPath); await applyProject(); await checkProjectRestored();
+    await openLandmark(); assert.ok(await landmarkPixels() > 300, '断网单文件实际渲染三维模型'); await dragLandmark(30, 10);
+    await cdp.evaluate("document.querySelector('[data-observation=map]').click()"); await checkProjectRestored();
     assert.equal(cdp.errors.length, 0, JSON.stringify(cdp.errors));
     await fs.copyFile(path.join(downloads, pngName), path.join(screenshotDir, '双城观察卡.png'));
-    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['完整比较项目实际下载与重新打开', '三份导入样本整体替换', '项目预览与取消', '项目慢读取取消', '损坏缺失冒用内置与超大项目保护', '手机与断网项目恢复', '三种图层真实画布', '真实内院像素保留', '建筑统计随移动变化', '道路与建筑独立来源导出', '四种尺度双侧统计', '鼠标左右图拖动', '键盘平移与Home', '共同边界限制', '缩放重新约束', '复制视图(隔离剪贴板接口)', '手动复制后备路径', '恢复与错误输入保护', '实际平移中心导出', '手机触摸拖动', '步行开关', '交换及选择城市', '同城一致性', '旧URL兼容', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['比较项目预览.png', '比较项目手机预览.png', '桌面预览.png', '建筑图层预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
-    console.log('浏览器检查通过：比较项目真实下载/重新打开、三份导入样本整体恢复与替换、预览/取消/慢读取取消、损坏/冒用内置/缺失样本/超大文件保护、手机与断网项目恢复；原有样本和地图交互检查通过，JavaScript 异常 0。');
+    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['三维 WebGL 实际钢架像素', '鼠标旋转与键盘相机', '三种三维预设视角', '三维缩放自动旋转线框与重置', 'GLB 与署名三维观察卡实际下载', '图形丢失与不可用后的重试', '隐藏三维停止绘制', '手机单指旋转与双指缩放', '断网单文件三维模型', '完整比较项目实际下载与重新打开', '三份导入样本整体替换', '项目预览与取消', '项目慢读取取消', '损坏缺失冒用内置与超大项目保护', '手机与断网项目恢复', '三种图层真实画布', '真实内院像素保留', '建筑统计随移动变化', '道路与建筑独立来源导出', '四种尺度双侧统计', '鼠标左右图拖动', '键盘平移与Home', '共同边界限制', '缩放重新约束', '复制视图(隔离剪贴板接口)', '手动复制后备路径', '恢复与错误输入保护', '实际平移中心导出', '手机触摸拖动', '步行开关', '交换及选择城市', '同城一致性', '旧URL兼容', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['经典建筑3D预览.png', '经典建筑3D手机预览.png', '经典建筑3D观察卡.png', '比较项目预览.png', '比较项目手机预览.png', '桌面预览.png', '建筑图层预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
+    console.log('浏览器检查通过：真实三维 WebGL 像素、旋转/缩放/多视角、键盘/触摸/双指、GLB/署名PNG、图形故障恢复、断网三维；比较项目真实下载/重新打开、三份导入样本整体恢复与替换、预览/取消/慢读取取消、损坏/冒用内置/缺失样本/超大文件保护、手机与断网项目恢复；原有样本和地图交互检查通过，JavaScript 异常 0。');
   } catch (e) { console.error(logs); throw e; }
   finally {
     if (cdp) cdp.socket.close();

@@ -39,13 +39,16 @@ def package(commit: str, output: Path | None = None, node: str | None = None) ->
     data_license = (ROOT / "数据许可.md").read_text(encoding="utf-8")
     sample_guide = (ROOT / "docs" / "样本包格式与导入.md").read_text(encoding="utf-8")
     project_guide = (ROOT / "docs" / "比较项目格式与恢复.md").read_text(encoding="utf-8")
+    landmark_guide = (ROOT / "docs" / "三维建筑使用说明.md").read_text(encoding="utf-8")
+    model_license = (ROOT / "模型许可.md").read_text(encoding="utf-8")
+    three_license = (ROOT / "licenses" / "three-MIT.txt").read_text(encoding="utf-8")
     info = dict(app="城市纹理", version=version, sourceCommit=commit,
                 sourceUrl=f"https://github.com/LouHC0814/city-texture/tree/{commit}",
                 appLicense="MIT", mapDataLicense="ODbL-1.0", runtime="浏览器；无需安装依赖")
     info_text = json.dumps(info, ensure_ascii=False, indent=2) + "\n"
     # 单文件也保留程序许可与版本来源，不将这些内容加入产品操作界面。
     html = html_path.read_text(encoding="utf-8")
-    html += "\n<!--\n" + license_text.replace("--", "—") + "\n" + info_text + "-->\n"
+    html += "\n<!--\n" + license_text.replace("--", "—") + "\n" + info_text + "\n" + three_license.replace("--", "—") + "\n" + model_license.replace("--", "—") + "-->\n"
     html_path.write_text(html, encoding="utf-8", newline="\n")
     (release_dir / guide_name).write_text(guide, encoding="utf-8", newline="\n")
     (release_dir / info_name).write_text(info_text, encoding="utf-8", newline="\n")
@@ -53,7 +56,8 @@ def package(commit: str, output: Path | None = None, node: str | None = None) ->
     contents = {"打开城市纹理.html": html.encode("utf-8"), "使用说明.md": guide.encode("utf-8"),
                 "程序许可.txt": license_text.encode("utf-8"), "数据许可.md": data_license.encode("utf-8"),
                 "版本信息.json": info_text.encode("utf-8"), "样本包格式与导入.md": sample_guide.encode("utf-8"),
-                "比较项目格式与恢复.md": project_guide.encode("utf-8")}
+                "比较项目格式与恢复.md": project_guide.encode("utf-8"), "三维建筑使用说明.md": landmark_guide.encode("utf-8"),
+                "模型许可.md": model_license.encode("utf-8"), "Three.js许可.txt": three_license.encode("utf-8")}
     with zipfile.ZipFile(release_dir / zip_name, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, data in contents.items():
             entry = zipfile.ZipInfo(f"{folder}/{name}", date_time=(2026, 1, 1, 0, 0, 0))
