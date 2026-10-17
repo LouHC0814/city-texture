@@ -185,7 +185,7 @@ async function until(callback, label, timeout = 10000) {
     const reportName = await until(async () => (await fs.readdir(downloads)).find(n => n.endsWith('.json')), '数据报告');
     const report = JSON.parse(await fs.readFile(path.join(downloads, reportName), 'utf8'));
     assert.equal(report.samples[0].city, '苏黎世'); assert.equal(report.samples[0].sideKm, 0.75); assert.equal(report.samples[1].source.license, 'ODbL-1.0');
-    assert.equal(report.appVersion, '0.5.0'); assert.equal(report.displayLayer, 'both'); assert.ok(report.samples[0].center[0] > require('../dist/data/zurich.js').lon);
+    assert.equal(report.appVersion, '0.6.0'); assert.equal(report.displayLayer, 'both'); assert.ok(report.samples[0].center[0] > require('../dist/data/zurich.js').lon);
     assert.equal(report.samples[0].buildings.featureCount, await buildingCount('left')); assert.equal(report.samples[1].buildings.source.license, 'ODbL-1.0');
     assert.notEqual(report.samples[0].source.fetchedAt, report.samples[0].buildings.source.fetchedAt);
     assert.deepEqual(report.samples[0].offsetKm, (await currentState()).offset); assert.deepEqual(report.samples[0].offsetKm, report.samples[1].offsetKm);
@@ -240,14 +240,38 @@ async function until(callback, label, timeout = 10000) {
     const samplePack = { format: S.FORMAT, version: 1, city: structuredClone(require('../dist/data/zurich.js')), buildings: structuredClone(require('../dist/data/zurich-buildings.js')) };
     samplePack.city.id = samplePack.buildings.cityId = 'zurich-imported'; samplePack.city.name = '<img src=x>';
     const samplePath = path.join(runtime, 'sample.json'); await fs.writeFile(samplePath, JSON.stringify(samplePack));
-    async function setSample(file) {
-      const doc = await cdp.call('DOM.getDocument'), input = await cdp.call('DOM.querySelector', { nodeId: doc.root.nodeId, selector: '#sample-file' });
+    async function setFile(selector, file) {
+      const doc = await cdp.call('DOM.getDocument'), input = await cdp.call('DOM.querySelector', { nodeId: doc.root.nodeId, selector });
       await cdp.call('DOM.setFileInputFiles', { nodeId: input.nodeId, files: [file] });
     }
+    const setSample = file => setFile('#sample-file', file);
     async function submitSample(file) {
       await setSample(file); await cdp.evaluate("document.getElementById('sample-form').requestSubmit()");
       await until(() => cdp.evaluate("!document.getElementById('import-sample').disabled"), '样本导入完成');
     }
+    const P = require('../dist/projects.js'), projectDownloads = path.join(runtime, 'project-downloads'); await fs.mkdir(projectDownloads);
+    const projectName = '城市纹理-比较项目.json';
+    async function chooseProject(file) {
+      if (!await cdp.evaluate("document.getElementById('project-dialog').open")) await cdp.evaluate("document.getElementById('open-project').click()");
+      await setFile('#project-file', file);
+      await until(() => cdp.evaluate("!document.getElementById('apply-project').disabled || document.getElementById('project-error').textContent.length>0"), '比较项目校验完成');
+    }
+    async function applyProject() {
+      assert.equal(await cdp.evaluate("document.getElementById('apply-project').disabled"), false);
+      await cdp.evaluate("document.getElementById('project-form').requestSubmit()");
+      assert.equal(await cdp.evaluate("document.getElementById('project-dialog').open"), false);
+    }
+    const builtinProjectState = await currentState();
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: projectDownloads });
+    await cdp.evaluate("document.getElementById('save-project').click()");
+    const builtinProjectPath = path.join(projectDownloads, projectName);
+    await until(async () => (await fs.readdir(projectDownloads)).includes(projectName), '仅内置城市的比较项目下载');
+    assert.deepEqual(P.parseProject(await fs.readFile(builtinProjectPath, 'utf8'), []).state, builtinProjectState);
+    await cdp.evaluate("document.getElementById('reset').click()"); const resetProjectState = await currentState();
+    await chooseProject(builtinProjectPath); assert.deepEqual(await currentState(), resetProjectState);
+    await cdp.evaluate("document.getElementById('close-project').click()"); assert.deepEqual(await currentState(), resetProjectState);
+    await chooseProject(builtinProjectPath); await applyProject(); assert.deepEqual(await checkMoved(), builtinProjectState);
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: sampleDownloads });
     const customView = C.stateHash({ left: 'zurich-imported', right: 'bern', side: 0.5, walking: true, layer: 'both', offset: [0.01, 0] });
     await cdp.evaluate(`document.getElementById('restore-view').click();document.getElementById('view-code').value=${JSON.stringify(customView)};document.getElementById('view-form').requestSubmit()`);
     assert.ok(await cdp.evaluate("document.getElementById('view-error').textContent.includes('先导入')"));
@@ -288,6 +312,58 @@ async function until(callback, label, timeout = 10000) {
       else assert.ok(await cdp.evaluate("document.getElementById('sample-error').textContent.includes('最多')"));
     }
     assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 6);
+    await cdp.evaluate("document.getElementById('close-samples').click()");
+    const projectState = { left: 'zurich-imported', right: 'nanjing', side: 0.5, walking: false, layer: 'buildings', offset: [0.02, -0.01] };
+    await cdp.evaluate(`document.getElementById('restore-view').click();document.getElementById('view-code').value=${JSON.stringify(C.stateHash(projectState))};document.getElementById('view-form').requestSubmit()`);
+    const customProjectDownloads = path.join(runtime, 'custom-project-downloads'); await fs.mkdir(customProjectDownloads);
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: customProjectDownloads });
+    await cdp.evaluate("document.getElementById('save-project').click()");
+    const customProjectPath = path.join(customProjectDownloads, projectName);
+    await until(async () => (await fs.readdir(customProjectDownloads)).includes(projectName), '含三份导入样本的比较项目下载');
+    const savedProject = JSON.parse(await fs.readFile(customProjectPath, 'utf8'));
+    assert.equal(savedProject.samples.length, 4); assert.equal(savedProject.view, C.stateHash(projectState));
+    async function checkProjectRestored() {
+      assert.deepEqual(await currentState(), projectState);
+      assert.equal(await metric('left'), expected('zurich', projectState.side, false, projectState.offset));
+      assert.equal(await metric('right'), expected('nanjing', projectState.side, false, projectState.offset));
+      assert.equal(await buildingCount('left'), expectedBuildings('zurich', projectState.side, projectState.offset));
+      assert.equal(await buildingCount('right'), expectedBuildings('nanjing', projectState.side, projectState.offset));
+      assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 6);
+      assert.ok(await cdp.evaluate("document.getElementById('left-provenance').textContent.includes('未经应用核验')"));
+    }
+    // 当前三份导入与项目中的 ID 相同，也必须整体替换而非重复加入。
+    await chooseProject(customProjectPath); await applyProject(); await checkProjectRestored();
+    await cdp.call('Page.navigate', { url: 'about:blank' }); await navigate(address);
+    assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 3);
+    const temporary = structuredClone(samplePack); temporary.city.id = temporary.buildings.cityId = 'temporary-sample';
+    const temporaryPath = path.join(runtime, 'temporary-sample.json'); await fs.writeFile(temporaryPath, JSON.stringify(temporary));
+    await cdp.evaluate("document.getElementById('samples').click()"); await submitSample(temporaryPath);
+    await cdp.evaluate("document.getElementById('close-samples').click()");
+    const beforeProject = await cdp.evaluate('location.hash'), beforeProjectIds = await cdp.evaluate("Array.from(document.getElementById('left-city').options,o=>o.value)");
+    await chooseProject(customProjectPath); await screenshot('比较项目预览.png');
+    assert.equal(await cdp.evaluate('location.hash'), beforeProject);
+    assert.equal(await cdp.evaluate("document.querySelectorAll('#project-preview img').length"), 0);
+    await cdp.evaluate("document.getElementById('close-project').click()");
+    assert.equal(await cdp.evaluate('location.hash'), beforeProject);
+    const brokenProject = structuredClone(savedProject); brokenProject.samples.at(-1).buildings.features[0].outers[0].pop();
+    const collisionProject = structuredClone(savedProject); collisionProject.samples.find(p => p.city.id === 'nanjing').city.source.rawSha256 = 'a'.repeat(64);
+    const missingProject = structuredClone(savedProject); missingProject.view = C.stateHash({ ...projectState, right: 'bern' });
+    const malformedFiles = [[badPath, null], [path.join(runtime, 'broken-project.json'), brokenProject], [path.join(runtime, 'collision-project.json'), collisionProject], [path.join(runtime, 'missing-project.json'), missingProject], [samplePath, null]];
+    for (const [file, content] of malformedFiles) {
+      if (content) await fs.writeFile(file, JSON.stringify(content)); await chooseProject(file);
+      assert.equal(await cdp.evaluate("document.getElementById('apply-project').disabled"), true);
+      assert.equal(await cdp.evaluate('location.hash'), beforeProject);
+      assert.deepEqual(await cdp.evaluate("Array.from(document.getElementById('left-city').options,o=>o.value)"), beforeProjectIds);
+    }
+    const hugeProjectPath = path.join(runtime, 'huge-project.json'); await fs.writeFile(hugeProjectPath, ' '.repeat(P.MAX_BYTES + 1));
+    await chooseProject(hugeProjectPath); assert.ok(await cdp.evaluate("document.getElementById('project-error').textContent.includes('32 MiB')"));
+    await cdp.evaluate("document.getElementById('close-project').click();window.__fileText=File.prototype.text;File.prototype.text=function(){const file=this;return new Promise(resolve=>{window.__finishProjectRead=async()=>resolve(await window.__fileText.call(file));});};document.getElementById('open-project').click()");
+    await setFile('#project-file', customProjectPath); await until(() => cdp.evaluate("typeof window.__finishProjectRead==='function'"), '比较文件正在读取');
+    await cdp.evaluate("document.getElementById('close-project').click();File.prototype.text=window.__fileText;window.__finishProjectRead()"); await delay(80);
+    assert.equal(await cdp.evaluate('location.hash'), beforeProject); assert.equal(await cdp.evaluate("document.getElementById('apply-project').disabled"), true);
+    await chooseProject(customProjectPath); await applyProject(); await checkProjectRestored();
+    assert.equal(await cdp.evaluate("Array.from(document.getElementById('left-city').options,o=>o.value).includes('temporary-sample')"), false);
+    await cdp.evaluate("document.getElementById('samples').click()");
     await cdp.evaluate("for(const b of Array.from(document.querySelectorAll('#sample-list button')).filter(b=>b.textContent==='移除'))b.click()");
     assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 3); assert.equal((await currentState()).left, 'zurich');
     await cdp.evaluate("document.getElementById('close-samples').click();document.getElementById('reset').click()");
@@ -316,6 +392,9 @@ async function until(callback, label, timeout = 10000) {
     await cdp.evaluate("document.getElementById('samples').click()");
     assert.equal(await cdp.evaluate("document.getElementById('sample-dialog').scrollWidth<=document.getElementById('sample-dialog').clientWidth"), true);
     await cdp.evaluate("document.getElementById('close-samples').click()");
+    await chooseProject(customProjectPath);
+    assert.equal(await cdp.evaluate("document.getElementById('project-dialog').scrollWidth<=document.getElementById('project-dialog').clientWidth"), true);
+    await screenshot('比较项目手机预览.png'); await cdp.evaluate("document.getElementById('close-project').click()");
     await cdp.call('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
     await cdp.evaluate("document.getElementById('left-map').scrollIntoView({block:'center'})");
     const touchRect = await cdp.evaluate("(()=>{const r=document.getElementById('left-map').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()");
@@ -338,10 +417,12 @@ async function until(callback, label, timeout = 10000) {
     await cdp.evaluate("document.getElementById('samples').click()"); await submitSample(samplePath);
     assert.equal((await currentState()).left, 'zurich-imported'); assert.equal(await metric('left'), expected('zurich', 0.75, true));
     assert.ok(await cdp.evaluate("document.getElementById('sample-message').textContent.includes('加入左侧')"));
+    await cdp.evaluate("document.getElementById('close-samples').click()");
+    await chooseProject(customProjectPath); await applyProject(); await checkProjectRestored();
     assert.equal(cdp.errors.length, 0, JSON.stringify(cdp.errors));
     await fs.copyFile(path.join(downloads, pngName), path.join(screenshotDir, '双城观察卡.png'));
-    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['三种图层真实画布', '真实内院像素保留', '建筑统计随移动变化', '道路与建筑独立来源导出', '四种尺度双侧统计', '鼠标左右图拖动', '键盘平移与Home', '共同边界限制', '缩放重新约束', '复制视图(隔离剪贴板接口)', '手动复制后备路径', '恢复与错误输入保护', '实际平移中心导出', '手机触摸拖动', '步行开关', '交换及选择城市', '同城一致性', '旧URL兼容', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['桌面预览.png', '建筑图层预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
-    console.log('浏览器检查通过：样本文件导入/导出/移除、重复与损坏/超大输入保护、数量限制、导入样本视图恢复与报告/PNG、文本安全显示、手机样本面板、断网单文件导入；原有地图交互检查通过，JavaScript 异常 0。');
+    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['完整比较项目实际下载与重新打开', '三份导入样本整体替换', '项目预览与取消', '项目慢读取取消', '损坏缺失冒用内置与超大项目保护', '手机与断网项目恢复', '三种图层真实画布', '真实内院像素保留', '建筑统计随移动变化', '道路与建筑独立来源导出', '四种尺度双侧统计', '鼠标左右图拖动', '键盘平移与Home', '共同边界限制', '缩放重新约束', '复制视图(隔离剪贴板接口)', '手动复制后备路径', '恢复与错误输入保护', '实际平移中心导出', '手机触摸拖动', '步行开关', '交换及选择城市', '同城一致性', '旧URL兼容', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['比较项目预览.png', '比较项目手机预览.png', '桌面预览.png', '建筑图层预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
+    console.log('浏览器检查通过：比较项目真实下载/重新打开、三份导入样本整体恢复与替换、预览/取消/慢读取取消、损坏/冒用内置/缺失样本/超大文件保护、手机与断网项目恢复；原有样本和地图交互检查通过，JavaScript 异常 0。');
   } catch (e) { console.error(logs); throw e; }
   finally {
     if (cdp) cdp.socket.close();

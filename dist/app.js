@@ -1,11 +1,12 @@
 (function () {
   'use strict';
-  const C = window.CityCore, S = window.CitySamples, cities = window.CITY_DATA || [], $ = id => document.getElementById(id);
+  const C = window.CityCore, S = window.CitySamples, P = window.CityProjects, cities = window.CITY_DATA || [], $ = id => document.getElementById(id);
   let noticeTimer;
   function notice(message, persistent = false) { clearTimeout(noticeTimer); $('status').textContent = message; if (!persistent) noticeTimer = setTimeout(() => { $('status').textContent = ''; }, 4500); }
-  if (!C || !S || cities.length < 2) { notice('城区数据加载失败。请完整解压项目后打开 dist/index.html，或使用单文件预览版。', true); return; }
+  if (!C || !S || !P || cities.length < 2) { notice('城区数据加载失败。请完整解压项目后打开 dist/index.html，或使用单文件预览版。', true); return; }
   const ids = cities.map(c => c.id), byId = Object.fromEntries(cities.map(c => [c.id, c]));
   const buildingData = Object.fromEntries((window.BUILDING_DATA || []).map(data => [data.cityId, data]));
+  const builtins = cities.map(city => ({ format: S.FORMAT, version: 1, city, buildings: buildingData[city.id] }));
   const imported = new Set();
   const provenance = id => imported.has(id) ? '用户导入，来源声明未经应用核验' : '项目内置快照';
   const coordinates = (lon, lat) => `${Math.abs(lat).toFixed(4)}° ${lat < 0 ? 'S' : 'N'}  ${Math.abs(lon).toFixed(4)}° ${lon < 0 ? 'W' : 'E'}`;
@@ -221,7 +222,7 @@
       }
       row.append(description, actions); $('sample-list').append(row);
     }
-    $('sample-count').textContent = `已导入 ${imported.size} / ${S.MAX_CUSTOM} 份；刷新或关闭页面后需要重新导入。`;
+    $('sample-count').textContent = `已导入 ${imported.size} / ${S.MAX_CUSTOM} 份；可用“保存比较”将样本和观察位置一起保存，下次打开。`;
   }
   $('samples').addEventListener('click', () => { finishDrag(); $('sample-error').textContent = ''; $('sample-message').textContent = ''; refreshSamples(); sampleDialog.showModal(); });
   $('close-samples').addEventListener('click', () => sampleDialog.close());
@@ -245,6 +246,57 @@
       $('sample-message').textContent = `已将${city.name}加入左侧比较。来源为用户声明，请自行核对原始数据；刷新前可下载样本包。`;
     } catch (error) { if (generation === importGeneration) $('sample-error').textContent = error.message; }
     finally { if (generation === importGeneration) $('import-sample').disabled = false; }
+  });
+  const projectDialog = $('project-dialog'); let projectGeneration = 0, projectStage = null;
+  $('save-project').addEventListener('click', () => {
+    try {
+      finishDrag();
+      const samples = [...imported].map(id => ({ format: S.FORMAT, version: 1, city: byId[id], buildings: buildingData[id] }));
+      const project = P.createProject(state, samples, builtins);
+      download(new Blob([JSON.stringify(project)], { type: 'application/json' }), '城市纹理-比较项目.json');
+      notice(`已保存比较位置和全部 ${imported.size} 份导入样本。下次点“打开比较”恢复。`);
+    } catch (error) { notice('保存比较失败：' + error.message); }
+  });
+  function clearProjectPreview() { projectStage = null; $('apply-project').disabled = true; $('project-preview').textContent = ''; }
+  $('open-project').addEventListener('click', () => {
+    finishDrag(); projectGeneration++; clearProjectPreview(); $('project-error').textContent = ''; $('project-file').value = ''; projectDialog.showModal();
+  });
+  $('close-project').addEventListener('click', () => projectDialog.close());
+  projectDialog.addEventListener('close', () => { projectGeneration++; clearProjectPreview(); });
+  $('project-file').addEventListener('change', async () => {
+    const generation = ++projectGeneration, file = $('project-file').files[0]; clearProjectPreview(); $('project-error').textContent = '';
+    if (!file) return;
+    $('project-preview').textContent = '正在检查比较文件…';
+    try {
+      if (file.size > P.MAX_BYTES) throw new Error('比较项目不能超过 32 MiB');
+      const input = await file.text(); if (generation !== projectGeneration) return;
+      const result = P.parseProject(input, builtins);
+      // 连计算缓存也在应用之前生成，最后一份样本失败时仍保留整个旧比较。
+      const caches = result.customSamples.map(pack => ({ pack, roads: C.prepare(pack.city), buildings: C.prepareBuildings(pack.city, pack.buildings) }));
+      const names = [result.state.left, result.state.right].map(id => result.project.samples.find(pack => pack.city.id === id).city.name);
+      projectStage = { ...result, caches };
+      $('project-preview').textContent = `${names.join(' × ')} · ${result.state.side * 1000} 米 · ${layerNames[result.state.layer]} · ${result.state.walking ? '含步行与骑行道路' : '仅机动车道路'}。包含 ${result.customSamples.length} 份导入样本，将替换当前 ${imported.size} 份导入样本和比较位置。`;
+      $('apply-project').disabled = false;
+    } catch (error) { if (generation === projectGeneration) { clearProjectPreview(); $('project-error').textContent = error.message; } }
+  });
+  $('project-form').addEventListener('submit', event => {
+    event.preventDefault(); if (!projectStage) return;
+    const restored = projectStage; finishDrag(); importGeneration++;
+    // 输入与几何缓存已全部校验；此处只一次性替换导入集合和视图。
+    for (const id of imported) {
+      cities.splice(cities.findIndex(city => city.id === id), 1); ids.splice(ids.indexOf(id), 1);
+      delete byId[id]; delete buildingData[id]; delete prepared[id]; delete preparedBuildings[id];
+    }
+    imported.clear();
+    for (const { pack, roads, buildings } of restored.caches) {
+      const city = pack.city; cities.push(city); ids.push(city.id); byId[city.id] = city; buildingData[city.id] = pack.buildings;
+      prepared[city.id] = roads; preparedBuildings[city.id] = buildings; imported.add(city.id);
+    }
+    for (const slot of ['left', 'right']) {
+      $(slot + '-city').replaceChildren();
+      for (const city of cities) { const option = document.createElement('option'); option.value = city.id; option.textContent = city.name; $(slot + '-city').append(option); }
+    }
+    state = restored.state; refreshSamples(); render(); projectDialog.close(); notice('已打开比较项目，恢复全部导入样本和观察位置。');
   });
   const viewDialog = $('view-dialog');
   function openView(code = '', manualCopy = false) {
@@ -276,7 +328,7 @@
   $('report').addEventListener('click', () => {
     const reports = ['left', 'right'].map(slot => ({ ...C.report(byId[state[slot]], results[slot], state.walking), sampleId: state[slot], dataProvenance: provenance(state[slot]),
       buildings: { featureCount: buildingResults[slot].featureCount, meaning: '与窗口有正面积交集的 OSM 轮廓要素，不等于独立楼栋或住房数量。', source: buildingData[state[slot]].source, skippedSourceFeatures: buildingData[state[slot]].conversion.skipped.length } }));
-    download(new Blob([JSON.stringify({ version: 3, app: '城市纹理', appVersion: '0.5.0', displayLayer: state.layer, view: C.stateHash(state), createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含道路与建筑的独立来源。');
+    download(new Blob([JSON.stringify({ version: 3, app: '城市纹理', appVersion: '0.6.0', displayLayer: state.layer, view: C.stateHash(state), createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含道路与建筑的独立来源。');
   });
   $('export').addEventListener('click', () => {
     const button = $('export'); button.disabled = true;
@@ -296,7 +348,7 @@
       });
       ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText('局部城区快照，不代表全市；方向多样性不是城市品质评分。局部等距圆柱近似，平面图未区分地下/室内层级。', 60, 1090, 1480);
       ctx.fillText('© OpenStreetMap contributors · ODbL 1.0 · https://www.openstreetmap.org/copyright', 60, 1124);
-      ctx.fillText('程序：城市纹理 v0.5 · https://github.com/LouHC0814/city-texture', 60, 1158);
+      ctx.fillText('程序：城市纹理 v0.6 · https://github.com/LouHC0814/city-texture', 60, 1158);
       canvas.toBlob(blob => { button.disabled = false; if (!blob) { notice('生成图片失败，请下载数据报告。'); return; } download(blob, '城市纹理-双城观察卡.png'); notice('双城观察卡已生成。'); }, 'image/png');
     } catch (error) { button.disabled = false; notice('导出失败：' + error.message); }
   });
