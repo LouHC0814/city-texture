@@ -258,6 +258,9 @@ async function until(callback, label, timeout = 10000) {
     await cdp.evaluate("document.querySelector('[data-observation=map]').click()");
     assert.equal(await cdp.evaluate('location.hash'), mapBefore3d); await checkMoved();
     const stoppedRenders = (await landmarkState()).renders; await delay(120); assert.equal((await landmarkState()).renders, stoppedRenders, '隐藏三维模式时停止绘制');
+    await openLandmark(); assert.ok(cameraDistance(await landmarkState()) > 10, '切回三维模式保留有效镜头距离');
+    assert.ok(await landmarkPixels() > 2000, '切回三维模式仍能看到完整模型');
+    await cdp.evaluate("document.querySelector('[data-observation=map]').click()");
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
     // 新的真实南京样本必须经过真实选择、移动、恢复和下载，不能只靠 Node 读取数据。
     assert.deepEqual(await cdp.evaluate("Array.from(document.getElementById('left-city').options,o=>o.value)"), ['zurich', 'bern', 'nanjing']);

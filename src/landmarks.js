@@ -38,7 +38,10 @@ function size() {
   const halfFov = Math.min(THREE.MathUtils.degToRad(camera.fov / 2), Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect));
   const previousDistance = distance;
   distance = 7 / Math.sin(halfFov) * 1.13;
-  if (loaded && previousDistance) camera.position.copy(controls.target).add(camera.position.clone().sub(controls.target).multiplyScalar(distance / previousDistance));
+  if (loaded && previousDistance) {
+    const offset = camera.position.clone().sub(controls.target).multiplyScalar(distance / previousDistance);
+    camera.position.copy(controls.target).add(offset);
+  }
   controls.minDistance = 3; controls.maxDistance = distance * 3;
   requestRender();
 }
