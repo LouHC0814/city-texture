@@ -1,0 +1,130 @@
+name: 发行离线版
+on:
+  push:
+    branches: [main]
+    paths: [.github/release.json]
+  pull_request:
+    paths:
+      - .github/release.json
+      - .github/workflows/release.yml
+      - scripts/打包发行版.py
+      - docs/发行说明-*.md
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: city-texture-release
+  cancel-in-progress: false
+jobs:
+  verify:
+    name: 构建并实测最终发行文件
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: 核对版本与发行说明
+        id: version
+        run: |
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          version = json.loads(Path('.github/release.json').read_text())['version']
+          assert isinstance(version, str) and re.fullmatch(r'\d+\.\d+\.\d+', version), '发行版本格式无效'
+          assert json.loads(Path('package.json').read_text())['version'] == version, '发行清单与程序版本不一致'
+          assert Path(f'docs/发行说明-v{version}.md').is_file(), '缺少对应版本发行说明'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'version={version}\n')
+          PY
+      - run: npm test
+      - name: 原始数据离线重建
+        run: node scripts/verify-rebuild.cjs
+        env:
+          PYTHON_BIN: python
+      - run: python -m unittest discover -s tests -p test_buildings.py
+      - name: 构建发行包
+        run: python scripts/打包发行版.py --commit "$GITHUB_SHA"
+      - name: 安装中文截图字体
+        run: sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
+      - name: 在真实浏览器中断网验证发行 HTML
+        run: npm run test:browser
+        env:
+          CITY_RELEASE_HTML: ${{ github.workspace }}/.runtime/releases/v${{ steps.version.outputs.version }}/city-texture-v${{ steps.version.outputs.version }}.html
+          BROWSER_SCREENSHOT_DIR: .runtime/release-screenshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: city-texture-v${{ steps.version.outputs.version }}
+          path: .runtime/releases/v${{ steps.version.outputs.version }}/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-browser-screenshots
+          path: .runtime/release-screenshots
+          if-no-files-found: ignore
+  publish:
+    name: 上传、下载核对并发布
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: city-texture-v${{ needs.verify.outputs.version }}
+          path: .runtime/release-assets
+      - name: 创建或恢复同一源码的发行草稿
+        run: |
+          if gh release view "v$VERSION" --json isDraft,targetCommitish > .runtime/release-state.json; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+          state = json.loads(Path('.runtime/release-state.json').read_text())
+          assert state['isDraft'], '该版本已发布，停止以免覆盖现有发行版'
+          assert state['targetCommitish'] == os.environ['GITHUB_SHA'], '草稿对应其他源码提交，停止以免混用资产'
+          PY
+          else
+            gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION · 城市纹理离线版" --notes-file "docs/发行说明-v$VERSION.md" --draft
+          fi
+      - name: 上传具有中文标签的稳定附件名
+        run: |
+          gh release upload "v$VERSION" \
+            ".runtime/release-assets/city-texture-v$VERSION-offline.zip#城市纹理离线包（推荐下载）" \
+            ".runtime/release-assets/city-texture-v$VERSION.html#城市纹理单文件（直接打开）" \
+            ".runtime/release-assets/usage-v$VERSION.md#中文使用说明" \
+            ".runtime/release-assets/version-v$VERSION.json#版本与源码信息" \
+            ".runtime/release-assets/SHA256SUMS-v$VERSION.txt#SHA-256 校验值" --clobber
+      - name: 下载草稿资产并逐字节核对
+        run: |
+          gh release download "v$VERSION" --dir .runtime/release-downloaded
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          expected, actual = Path('.runtime/release-assets'), Path('.runtime/release-downloaded')
+          assert sorted(p.name for p in expected.iterdir()) == sorted(p.name for p in actual.iterdir()), '附件清单不一致'
+          for path in expected.iterdir():
+              assert path.read_bytes() == (actual / path.name).read_bytes(), f'附件下载内容不一致：{path.name}'
+          info = json.loads((actual / f'version-v{os.environ["VERSION"]}.json').read_text())
+          assert info['sourceCommit'] == os.environ['GITHUB_SHA'], '源码提交不一致'
+          assert info['version'] == os.environ['VERSION'], '版本不一致'
+          print('五份下载资产与已通过浏览器检查的发行文件逐字节一致。')
+          PY
+          cd .runtime/release-downloaded
+          sha256sum --check "SHA256SUMS-v$VERSION.txt"
+      - name: 发布并更新最新版本入口
+        run: |
+          gh release edit "v$VERSION" --draft=false --latest
+          gh release view "v$VERSION" --json url,tagName,isDraft,isPrerelease
