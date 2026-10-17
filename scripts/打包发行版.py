@@ -37,6 +37,7 @@ def package(commit: str, output: Path | None = None, node: str | None = None) ->
         raise ValueError("使用说明的版本号需要与 package.json 一致")
     license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
     data_license = (ROOT / "数据许可.md").read_text(encoding="utf-8")
+    sample_guide = (ROOT / "docs" / "样本包格式与导入.md").read_text(encoding="utf-8")
     info = dict(app="城市纹理", version=version, sourceCommit=commit,
                 sourceUrl=f"https://github.com/LouHC0814/city-texture/tree/{commit}",
                 appLicense="MIT", mapDataLicense="ODbL-1.0", runtime="浏览器；无需安装依赖")
@@ -50,7 +51,7 @@ def package(commit: str, output: Path | None = None, node: str | None = None) ->
     folder = f"城市纹理-v{version}"
     contents = {"打开城市纹理.html": html.encode("utf-8"), "使用说明.md": guide.encode("utf-8"),
                 "程序许可.txt": license_text.encode("utf-8"), "数据许可.md": data_license.encode("utf-8"),
-                "版本信息.json": info_text.encode("utf-8")}
+                "版本信息.json": info_text.encode("utf-8"), "样本包格式与导入.md": sample_guide.encode("utf-8")}
     with zipfile.ZipFile(release_dir / zip_name, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, data in contents.items():
             entry = zipfile.ZipInfo(f"{folder}/{name}", date_time=(2026, 1, 1, 0, 0, 0))
