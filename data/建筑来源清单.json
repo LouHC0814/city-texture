@@ -20,5 +20,16 @@
     "fetchedAt": "2026-10-16T06:03:26.773081+00:00",
     "rawSha256": "07f617536a2a3a0d3eab0fd1f11d7f77c517a3152002a5e0513a6abed8e456b3",
     "limitations": "建筑轮廓要素，不是独立楼栋或住房数量；不含仅标注 building:part 的要素，不做面积去重或覆盖率推断。"
+  },
+  "nanjing": {
+    "name": "OpenStreetMap contributors",
+    "license": "ODbL-1.0",
+    "url": "https://www.openstreetmap.org/copyright",
+    "endpoint": "https://overpass-api.de/api/interpreter",
+    "query": "[out:json][timeout:25];(way[\"building\"][\"building\"!=\"no\"](32.0386537,118.7730647,32.0485463,118.7847353);rel[\"type\"=\"multipolygon\"][\"building\"][\"building\"!=\"no\"](32.0386537,118.7730647,32.0485463,118.7847353););out geom;",
+    "snapshotToken": "2026-10-17T03:28:27Z",
+    "fetchedAt": "2026-10-17T03:29:50.330444+00:00",
+    "rawSha256": "cfe4fc210424c862ed2c2b1ec484ef4c7a83bbc87fa313cd39cfe4ad4b8c86a8",
+    "limitations": "OSM 建筑轮廓可能缺漏；不含仅标注 building:part 的要素，无高度，不是楼栋或住房数，不做覆盖率推断。"
   }
 }

@@ -185,7 +185,7 @@ async function until(callback, label, timeout = 10000) {
     const reportName = await until(async () => (await fs.readdir(downloads)).find(n => n.endsWith('.json')), '数据报告');
     const report = JSON.parse(await fs.readFile(path.join(downloads, reportName), 'utf8'));
     assert.equal(report.samples[0].city, '苏黎世'); assert.equal(report.samples[0].sideKm, 0.75); assert.equal(report.samples[1].source.license, 'ODbL-1.0');
-    assert.equal(report.appVersion, '0.4.0'); assert.equal(report.displayLayer, 'both'); assert.ok(report.samples[0].center[0] > require('../dist/data/zurich.js').lon);
+    assert.equal(report.appVersion, '0.5.0'); assert.equal(report.displayLayer, 'both'); assert.ok(report.samples[0].center[0] > require('../dist/data/zurich.js').lon);
     assert.equal(report.samples[0].buildings.featureCount, await buildingCount('left')); assert.equal(report.samples[1].buildings.source.license, 'ODbL-1.0');
     assert.notEqual(report.samples[0].source.fetchedAt, report.samples[0].buildings.source.fetchedAt);
     assert.deepEqual(report.samples[0].offsetKm, (await currentState()).offset); assert.deepEqual(report.samples[0].offsetKm, report.samples[1].offsetKm);
@@ -201,6 +201,39 @@ async function until(callback, label, timeout = 10000) {
       await fs.writeFile(path.join(screenshotDir, name), Buffer.from(shot.data, 'base64'));
     }
     await cdp.evaluate("document.getElementById('status').textContent=''"); await screenshot('桌面预览.png');
+    // 新的真实南京样本必须经过真实选择、移动、恢复和下载，不能只靠 Node 读取数据。
+    assert.deepEqual(await cdp.evaluate("Array.from(document.getElementById('left-city').options,o=>o.value)"), ['zurich', 'bern', 'nanjing']);
+    await cdp.evaluate("document.getElementById('left-city').value='nanjing';document.getElementById('left-city').dispatchEvent(new Event('change'));document.getElementById('right-city').value='zurich';document.getElementById('right-city').dispatchEvent(new Event('change'))");
+    assert.ok(await cdp.evaluate("document.getElementById('left-provenance').textContent.includes('地下及室内')"));
+    for (const side of [0.25, 0.5, 0.75, 1]) {
+      await cdp.evaluate(`document.querySelector('[data-side="${side}"]').click()`); await checkMoved();
+    }
+    const nanjingLayers = [];
+    for (const layer of ['roads', 'buildings', 'both']) {
+      await cdp.evaluate(`document.querySelector('[data-layer="${layer}"]').click()`); await checkMoved();
+      nanjingLayers.push(await cdp.evaluate("document.getElementById('left-map').toDataURL()"));
+    }
+    assert.equal(new Set(nanjingLayers).size, 3);
+    await cdp.evaluate("document.getElementById('walking').click()"); await checkMoved();
+    await cdp.evaluate("document.getElementById('walking').click();document.querySelector('[data-side=\"0.5\"]').click();document.getElementById('center').click()");
+    await dragMap('left', 70, -25); const nanjingState = await checkMoved();
+    assert.equal(nanjingState.left, 'nanjing'); assert.notDeepEqual(nanjingState.offset, [0, 0]);
+    await cdp.evaluate("document.getElementById('swap').click()"); assert.equal((await checkMoved()).right, 'nanjing');
+    await cdp.evaluate(`document.getElementById('restore-view').click();document.getElementById('view-code').value=${JSON.stringify(C.stateHash(nanjingState))};document.getElementById('view-form').requestSubmit()`);
+    assert.deepEqual(await checkMoved(), nanjingState);
+    await cdp.evaluate('scrollTo(0,0)'); await screenshot('南京双城预览.png');
+    const nanjingDownloads = path.join(runtime, 'nanjing-downloads'); await fs.mkdir(nanjingDownloads);
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: nanjingDownloads });
+    await cdp.evaluate("document.getElementById('report').click();document.getElementById('export').click()");
+    const nanjingReportName = await until(async () => (await fs.readdir(nanjingDownloads)).find(n => n.endsWith('.json')), '南京报告');
+    const nanjingReport = JSON.parse(await fs.readFile(path.join(nanjingDownloads, nanjingReportName), 'utf8'));
+    const nCity = require('../dist/data/nanjing.js');
+    assert.equal(nanjingReport.samples[0].sampleId, 'nanjing'); assert.equal(nanjingReport.samples[0].sampleNote, nCity.note);
+    assert.equal(nanjingReport.samples[0].source.rawSha256, nCity.source.rawSha256);
+    assert.equal(nanjingReport.samples[0].buildings.source.rawSha256, require('../dist/data/nanjing-buildings.js').source.rawSha256);
+    const nanjingPng = await until(async () => (await fs.readdir(nanjingDownloads)).find(n => n.endsWith('.png')), '南京观察卡');
+    await fs.copyFile(path.join(nanjingDownloads, nanjingPng), path.join(screenshotDir, '南京观察卡.png'));
+    await cdp.evaluate("document.getElementById('reset').click();document.querySelector('[data-pan=\"1,0\"]').click()");
     // 通过浏览器文件选择接口加载实际 JSON，不跳过文件读取和 submit 事件。
     const S = require('../dist/samples.js'), sampleDownloads = path.join(runtime, 'sample-downloads'); await fs.mkdir(sampleDownloads);
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: sampleDownloads });
@@ -254,9 +287,9 @@ async function until(callback, label, timeout = 10000) {
       if (i < 4) assert.equal((await currentState()).left, p.city.id);
       else assert.ok(await cdp.evaluate("document.getElementById('sample-error').textContent.includes('最多')"));
     }
-    assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 5);
+    assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 6);
     await cdp.evaluate("for(const b of Array.from(document.querySelectorAll('#sample-list button')).filter(b=>b.textContent==='移除'))b.click()");
-    assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 2); assert.equal((await currentState()).left, 'zurich');
+    assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 3); assert.equal((await currentState()).left, 'zurich');
     await cdp.evaluate("document.getElementById('close-samples').click();document.getElementById('reset').click()");
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
     if (process.env.CITY_CONVERTED_SAMPLE) {
@@ -268,7 +301,7 @@ async function until(callback, label, timeout = 10000) {
       assert.equal(await buildingCount('left'), C.analyzeBuildings(C.prepareBuildings(converted.city, converted.buildings), view.side, view.offset).featureCount);
       assert.ok(await cdp.evaluate(`document.getElementById('data-details').textContent.includes(${JSON.stringify(converted.city.source.rawSha256)})`));
       await cdp.evaluate(`Array.from(document.querySelectorAll('#sample-list button')).find(b=>b.getAttribute('aria-label')===${JSON.stringify('移除' + converted.city.name + '样本')}).click();document.getElementById('close-samples').click();document.getElementById('reset').click()`);
-      assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 2);
+      assert.equal(await cdp.evaluate("document.getElementById('left-city').options.length"), 3);
       console.log('原始 Overpass 离线转换产物已通过实际文件选择导入，几何统计、来源与移除均正确。');
     }
     await cdp.evaluate("document.querySelector('[data-layer=\"buildings\"]').click()"); await screenshot('建筑图层预览.png');
@@ -292,11 +325,16 @@ async function until(callback, label, timeout = 10000) {
     await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await delay(80);
     assert.notDeepEqual((await checkMoved()).offset, touchBefore);
     await cdp.evaluate('scrollTo(0,0)'); await screenshot('手机预览.png');
+    await cdp.evaluate("document.getElementById('left-city').value='nanjing';document.getElementById('left-city').dispatchEvent(new Event('change'))"); await checkMoved();
+    assert.equal(await cdp.evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+    await cdp.evaluate('scrollTo(0,0)'); await screenshot('南京手机预览.png');
     const standalone = process.env.CITY_RELEASE_HTML || await build(); await cdp.call('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
     await navigate(pathToFileURL(standalone).href); assert.equal(await metric('left'), expected('zurich', 0.75, true));
     assert.ok(await buildingCount('left') > 100); await cdp.evaluate("document.querySelector('[data-layer=\"buildings\"]').click()"); assert.equal((await currentState()).layer, 'buildings');
     await cdp.evaluate("document.querySelector('[data-side=\"0.25\"]').click();document.querySelector('[data-pan=\"1,0\"]').click()"); await checkMoved();
     await cdp.evaluate("document.querySelector('.brand').click()"); await delay(80); assert.equal(await metric('right'), expected('bern', 0.75, true));
+    await cdp.evaluate("document.getElementById('left-city').value='nanjing';document.getElementById('left-city').dispatchEvent(new Event('change'))"); await checkMoved();
+    assert.equal((await currentState()).left, 'nanjing');
     await cdp.evaluate("document.getElementById('samples').click()"); await submitSample(samplePath);
     assert.equal((await currentState()).left, 'zurich-imported'); assert.equal(await metric('left'), expected('zurich', 0.75, true));
     assert.ok(await cdp.evaluate("document.getElementById('sample-message').textContent.includes('加入左侧')"));

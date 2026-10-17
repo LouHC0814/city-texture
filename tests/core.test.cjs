@@ -79,6 +79,23 @@ test('平移报告以实际位置为中心并保留投影原点', () => {
   assert.deepEqual(r.center, C.unproject(0.12, -0.07, city)); assert.deepEqual(r.projectionOrigin, [8, 47]);
   assert.deepEqual(r.bounds[0], C.unproject(-0.005, -0.195, city)); assert.deepEqual(r.offsetKm, [0.12, -0.07]);
 });
+test('南京与任一内置城市的联动窗口都在道路和建筑下载框内', () => {
+  const city = require('../dist/data/nanjing.js');
+  for (const id of ['zurich', 'bern', 'nanjing']) for (const side of [0.25, 0.5, 0.75, 1]) {
+    const other = require(`../dist/data/${id}.js`);
+    const selected = [city, other], inputs = [...selected, ...selected.map(c => ({ ...c, bbox: require(`../dist/data/${c.id}-buildings.js`).bbox }))];
+    const limits = C.panBounds(inputs, side);
+    for (const request of [[-99, -99], [99, 99], [-99, 99], [99, -99]]) {
+      const offset = C.clampOffset(request, limits);
+      for (const c of inputs) {
+        const report = C.report(c, C.analyze(C.prepare(c), side, true, offset), true);
+        assert.ok(report.bounds[0][0] >= c.bbox[1] && report.bounds[0][1] >= c.bbox[0]);
+        assert.ok(report.bounds[1][0] <= c.bbox[3] && report.bounds[1][1] <= c.bbox[2]);
+      }
+    }
+  }
+  assert.ok(C.report(city, C.analyze(C.prepare(city), 0.75, true), true).sampleNote.includes('地下'));
+});
 test('视图恢复接受参数和链接，拒绝未知城市、版本与坏数据', () => {
   const ids = ['zurich', 'bern'], hash = '#v=2&a=bern&b=zurich&s=0.5&w=1&x=25.125&y=-10.000';
   assert.deepEqual(C.parseView('https://example.com/app/' + hash, ids), C.readState(hash, ids));
@@ -116,7 +133,7 @@ test('报告保留窗口坐标与来源，不输出绘制缓存', () => {
   assert.equal(r.areaKm2, 0.25); assert.equal(r.bounds.length, 2); close(r.bounds[0][0], -r.bounds[1][0]);
   assert.equal(r.source.license, 'ODbL-1.0'); assert.equal(r.segments, undefined); assert.ok(r.caveats.includes('不是城市质量评分'));
 });
-for (const id of ['zurich', 'bern']) {
+for (const id of ['zurich', 'bern', 'nanjing']) {
   test(`真实样本 ${id}：来源、格式与各尺度的几何不变量`, () => {
     const city = require(`../dist/data/${id}.js`), prepared = C.prepare(city);
     assert.equal(city.id, id); assert.equal(city.source.license, 'ODbL-1.0'); assert.ok(city.source.query.includes('way[highway]'));
@@ -183,7 +200,7 @@ test('图层视图支持 v3，v1/v2 保持仅道路，坏图层不可恢复', ()
   for (const v of ['1', '2']) assert.equal(C.readState(`#v=${v}&a=bern&b=zurich&s=0.5&w=1&x=10&y=0`, ids).layer, 'roads');
   assert.throws(() => C.parseView('#v=3&a=bern&b=zurich&s=0.5&w=1&x=0&y=0&l=bad', ids));
 });
-for (const id of ['zurich', 'bern']) test(`真实建筑 ${id}：来源、内院、要素唯一与窗口变化`, () => {
+for (const id of ['zurich', 'bern', 'nanjing']) test(`真实建筑 ${id}：来源、内院、要素唯一与窗口变化`, () => {
   const city = require(`../dist/data/${id}.js`), data = require(`../dist/data/${id}-buildings.js`), buildings = C.prepareBuildings(city, data);
   assert.deepEqual(data.bbox, city.bbox); assert.equal(data.source.license, 'ODbL-1.0'); assert.match(data.source.rawSha256, /^[a-f0-9]{64}$/);
   assert.ok(data.features.length > 100 && data.conversion.innerRings > 0 && data.conversion.relations > 0);

@@ -10,7 +10,7 @@ import math
 import urllib.parse
 import urllib.request
 
-from 获取城市数据 import CITIES, ROOT
+from 获取城市数据 import CITIES, CITY_ENDPOINTS, ROOT
 
 
 def points(geometry):
@@ -117,7 +117,8 @@ def convert(elements):
                          innerRings=sum(len(f["inners"]) for f in features), skipped=skipped)
 
 
-def fetch(city, endpoint, offline=False, force=False):
+def fetch(city, endpoint=None, offline=False, force=False):
+    endpoint = endpoint or CITY_ENDPOINTS.get(city["id"], "https://overpass.osm.ch/api/interpreter")
     lat_delta = math.degrees(0.55 / 6371.0088)
     lon_delta = lat_delta / math.cos(math.radians(city["lat"]))
     bbox = [city["lat"] - lat_delta, city["lon"] - lon_delta, city["lat"] + lat_delta, city["lon"] + lon_delta]
@@ -171,7 +172,7 @@ def fetch(city, endpoint, offline=False, force=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--endpoint", default="https://overpass.osm.ch/api/interpreter")
+    parser.add_argument("--endpoint", help="覆盖接口；默认按城市选择瑞士或全球实例")
     parser.add_argument("--city", choices=[c["id"] for c in CITIES])
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--force", action="store_true")

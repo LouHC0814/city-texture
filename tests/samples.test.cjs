@@ -6,7 +6,7 @@ const fixture = () => structuredClone({ format: S.FORMAT, version: 1,
   city: require('../dist/data/zurich.js'), buildings: require('../dist/data/zurich-buildings.js') });
 const rejects = (change, pattern) => { const p = fixture(); change(p); assert.throws(() => S.validateSample(p), pattern); };
 
-for (const id of ['zurich', 'bern']) test(`样本包 ${id} 往返保留几何、来源、内院与四种尺度统计`, () => {
+for (const id of ['zurich', 'bern', 'nanjing']) test(`样本包 ${id} 往返保留几何、来源、内院与四种尺度统计`, () => {
   const city = require(`../dist/data/${id}.js`), buildings = require(`../dist/data/${id}-buildings.js`);
   const pack = S.parseSample(JSON.stringify({ format: S.FORMAT, version: 1, city, buildings }));
   assert.deepEqual(pack.city.roads, city.roads); assert.deepEqual(pack.city.source, city.source);
@@ -42,6 +42,11 @@ test('只返回允许字段，不信任输入声明的转换计数和 provenance
   assert.equal(pack.unknown, undefined); assert.equal(pack.buildings.conversion.featureCount, p.buildings.features.length);
   assert.notEqual(pack.buildings.conversion.relations, 99999);
   pack.city.roads[0].points[0][0] = 0; assert.notEqual(p.city.roads[0].points[0][0], 0);
+});
+test('可选样本说明往返保留，拒绝无效说明', () => {
+  const p = fixture(); p.city.note = '含地下及室内通道；平面图未区分层级。';
+  assert.equal(S.parseSample(JSON.stringify(p)).city.note, p.city.note);
+  for (const note of [null, '', 'x'.repeat(161), 'bad\nline']) rejects(value => { value.city.note = note; }, /样本说明/);
 });
 test('道路和建筑范围都覆盖所有尺度，拒绝过小或过大的下载框', () => {
   rejects(p => { p.city.bbox[0] = p.city.lat - 0.001; }, /501/);

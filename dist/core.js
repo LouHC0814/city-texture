@@ -180,7 +180,7 @@
   function report(city, result, walking) {
     const half = result.sideKm / 2;
     const [x, y] = result.offsetKm || [0, 0];
-    return { city: city.name, sample: city.district, center: unproject(x, y, city),
+    return { city: city.name, sample: city.district, sampleNote: city.note || null, center: unproject(x, y, city),
       projectionOrigin: [city.lon, city.lat], offsetKm: [x, y],
       bounds: [unproject(x - half, y - half, city), unproject(x + half, y + half, city)],
       filter: walking ? '机动车道路及已收录的步行/骑行道路' : '机动车道路（含 service）',

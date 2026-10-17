@@ -4,7 +4,10 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
-const paths = ['zurich', 'bern', 'zurich-buildings', 'bern-buildings'].map(id => path.join(root, 'dist/data', id + '.js'));
+const ids = Object.keys(JSON.parse(fs.readFileSync(path.join(root, 'data/来源清单.json'), 'utf8')));
+const buildingIds = Object.keys(JSON.parse(fs.readFileSync(path.join(root, 'data/建筑来源清单.json'), 'utf8')));
+assert.deepEqual([...ids].sort(), [...buildingIds].sort(), '道路与建筑的内置样本 ID 必须一致');
+const paths = ids.flatMap(id => [id, id + '-buildings']).map(id => path.join(root, 'dist/data', id + '.js'));
 const hash = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const before = paths.map(hash);
 // CI 通过 PYTHON_BIN 指定解释器；本机运行时也应传绝对路径。
