@@ -1,0 +1,21 @@
+{
+  "scene.gltf": {
+    "bytes": 5289,
+    "sha256": "39c860124267d503b5e0f4115b86c0e614da025121c5cf1df5ec161f19e06764"
+  },
+  "scene.bin": {
+    "bytes": 5693232,
+    "sha256": "34bf9836269b29bd7cfe4a3d44c769b703434531f98906013ee1ad7107c2ce4d"
+  },
+  "license.txt": {
+    "bytes": 688,
+    "sha256": "738eb3fa4f18537e1836016d05f7dd3a3d60ab6998810fe44bcb63b6824e3234"
+  },
+  "repository": "diarmidmackenzie/scale-of-the-universe-vr",
+  "commit": "99fd19ec14019aad697a47807c5941398d35bb9d",
+  "model": "( FREE ) La tour Eiffel",
+  "author": "SDC",
+  "license": "CC-BY-4.0",
+  "source": "https://sketchfab.com/3d-models/free-la-tour-eiffel-8553f94d06e24cb4b0fde1080f281674",
+  "modifications": "保留完整几何和原有材质；转换为自包含 GLB 并 gzip 压缩。展台统一居中和展示缩放，不将模型单位宣称为实际米。"
+}

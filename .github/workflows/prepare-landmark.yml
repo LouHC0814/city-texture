@@ -1,0 +1,41 @@
+name: 准备经典建筑资源
+on:
+  push:
+    branches: [build/landmark-assets]
+permissions:
+  contents: read
+concurrency:
+  group: city-texture-model-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    name: 校验固定来源并提交离线模型
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: 取得并核对固定模型来源
+        run: python scripts/获取三维模型.py
+      - name: 构建离线模型和三维引擎
+        run: |
+          npm ci
+          python scripts/准备三维模型.py
+          npm run build:3d
+          npm test
+      - name: 只提交已经校验的模型产物
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/models/eiffel-source.bin.gz data/models/eiffel-source.gltf.gz data/models/eiffel-source.txt dist/data/landmark-eiffel.js dist/landmarks.js
+          if ! git diff --cached --quiet; then
+            git commit -m 'build: 校验并归档经典建筑模型与本地三维引擎'
+            git push origin HEAD:refs/heads/build/landmark-assets
+          fi

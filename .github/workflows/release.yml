@@ -44,6 +44,12 @@ jobs:
               out.write(f'version={version}\n')
           PY
       - run: npm test
+      - name: 重建三维模型与本地引擎
+        run: |
+          npm ci
+          python scripts/准备三维模型.py
+          npm run build:3d
+          git diff --exit-code -- dist/data/landmark-eiffel.js dist/landmarks.js
       - name: 原始数据离线重建
         run: node scripts/verify-rebuild.cjs
         env:
@@ -59,6 +65,7 @@ jobs:
         run: npm run test:browser
         env:
           CITY_RELEASE_HTML: ${{ github.workspace }}/.runtime/releases/v${{ steps.version.outputs.version }}/city-texture-v${{ steps.version.outputs.version }}.html
+          CITY_BROWSER_SOFTWARE_GL: '1'
           BROWSER_SCREENSHOT_DIR: .runtime/release-screenshots
           CITY_CONVERTED_SAMPLE: .runtime/苏黎世-导入示例.json
       - uses: actions/upload-artifact@v4
