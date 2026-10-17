@@ -184,6 +184,9 @@ class SampleConversion(unittest.TestCase):
         path.write_bytes(b'\x1f\x8btruncated')
         with self.assertRaises(ValueError):
             self.run_conversion()
+        path.write_bytes(b'\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\x07' + b'\x00' * 8)
+        with self.assertRaisesRegex(ValueError, '不能读取'):
+            self.run_conversion()
         self.assertFalse(self.output.exists())
 
     def test_missing_node_executable_preserves_old_output(self):

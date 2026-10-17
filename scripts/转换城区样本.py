@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import zlib
 
 from 获取建筑数据 import convert as convert_buildings
 from 获取城市数据 import ROAD_TYPES, ROOT
@@ -46,7 +47,7 @@ def read_limited(path: Path, limit: int, compressed: bool = False) -> bytes:
         opener = gzip.open if compressed else open
         with opener(path, 'rb') as stream:
             raw = stream.read(limit + 1)
-    except (OSError, EOFError) as error:
+    except (OSError, EOFError, zlib.error) as error:
         raise ValueError(f'不能读取 {path.name}：{error}') from error
     if len(raw) > limit:
         raise ValueError(f'{path.name} 解压后的内容超过 {limit} 字节上限')

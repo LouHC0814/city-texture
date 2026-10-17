@@ -69,8 +69,13 @@ async function until(callback, label, timeout = 10000) {
     assert.equal((await fetch(address)).status, 200); assert.equal((await fetch(address + '/missing')).status, 404);
     const profile = path.join(runtime, 'profile');
     browser = spawn(executable, ['--headless=new', '--disable-gpu', ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []), '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    let browserError; browser.once('error', error => { browserError = error; });
     browser.stderr.on('data', data => { logs = (logs + data).slice(-8000); });
-    const port = await until(async () => { try { return Number((await fs.readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); } catch (_) { return false; } }, '浏览器启动');
+    const port = await until(async () => {
+      if (browserError) throw browserError;
+      if (browser.exitCode !== null) throw new Error(`浏览器在调试端口就绪前退出，代码 ${browser.exitCode}`);
+      try { return Number((await fs.readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]); } catch (_) { return false; }
+    }, '浏览器启动', 30000);
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); cdp = new CDP(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
     await cdp.call('Page.enable'); await cdp.call('Runtime.enable'); await cdp.call('Network.enable');
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
