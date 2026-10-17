@@ -19,6 +19,24 @@ let viewJustApplied = false;
 // 当前 size() 算出的 maxDistance；OrbitControls.update() 每帧都会把 spherical.radius 钳制到
 // [minDistance, maxDistance]，必须把 maxDistance 永久撑大，否则下一帧就把相机位置静默截回。
 let rememberedMaxDistance = 0;
+// 视角文件保存的远裁剪面上限，与 dist/view.js 中 `checkNumber('far', view.far, view.near + 0.1, 10000)`
+// 保持一致：fitProjection 拉大 far 时不超过 10000，保证新保存的文件可以被同一套校验再次接受。
+const FAR_LIMIT = 10000;
+// 投影保护：让远裁剪面始终覆盖「当前相机到目标距离 + 模型包围 + 1 单位余量」，
+// 并把 controls.maxDistance 收紧到「能完整看到模型的距离」，避免按钮 / 滚轮 / 双指 / 键盘 +/-
+// 以及窗口变化后续缩小把模型越过远裁剪面。fitProjection 由 controls 'change' 监听统一触发，
+// 覆盖所有缩放入口；保存端的 captureView 也走同一条规则，保证应用保存-打开往返一致。
+function fitProjection(distanceFromCamera) {
+  if (!loaded || !camera || !controls || failed || !modelExtent) return;
+  const current = Number.isFinite(distanceFromCamera) ? distanceFromCamera : camera.position.distanceTo(controls.target);
+  const required = current + modelExtent + 1;
+  if (camera.far < required) {
+    camera.far = Math.min(FAR_LIMIT, Math.max(camera.far, required));
+    camera.updateProjectionMatrix();
+  }
+  const ceiling = Math.max(controls.minDistance + 0.5, Math.min(camera.far - modelExtent, FAR_LIMIT - modelExtent));
+  if (controls.maxDistance > ceiling) controls.maxDistance = ceiling;
+}
 let glbBuffer;
 
 async function modelBytes() {
@@ -124,10 +142,14 @@ async function init() {
     camera = new THREE.PerspectiveCamera(40, 1, 0.1, 180);
     controls = new OrbitControls(camera, canvas); controls.enableDamping = true; controls.dampingFactor = 0.12;
     controls.maxPolarAngle = Math.PI / 2 - 0.015; controls.autoRotateSpeed = 0.7; controls.autoRotate = spinning;
-    controls.addEventListener('change', requestRender); controls.addEventListener('start', () => { spin(false); });
-    // 用户拖动/平移/双指缩放结束后，相机不再匹配任何预设；标记为 custom 防止预览误称。
+    controls.addEventListener('change', () => { fitProjection(); requestRender(); });
+    controls.addEventListener('start', () => { spin(false); });
+    // 用户拖动/平移/双指缩放结束后，相机不再匹配任何预设：标记为 custom 防止预览误称。
+    // 视角文件刚应用后也可能触到 end，需要先把 viewJustApplied 清掉再标 custom，避免「打开视角后直接拖动
+    // 预设仍停留在旧值」的情况。
     controls.addEventListener('end', () => {
-      if (viewJustApplied) return; view = 'custom';
+      if (viewJustApplied) viewJustApplied = false;
+      view = 'custom';
       document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === view)));
     });
     const pmrem = new THREE.PMREMGenerator(renderer), room = new RoomEnvironment();
@@ -182,6 +204,11 @@ function activate(value) {
 }
 function captureView() {
   if (!loaded || !camera || !controls || failed) throw new Error('模型未就绪，无法保存视角');
+  const viewDistance = camera.position.distanceTo(controls.target);
+  // 保存与打开走同一条规则：远裁剪面必须留出模型包围空间，否则文件级校验会拒绝，造成往返失败。
+  if (modelExtent > 0 && camera.far < viewDistance + modelExtent) {
+    throw new Error(`当前远裁剪面（${camera.far}）小于相机距离与模型包围球半径之和 ${(viewDistance + modelExtent).toFixed(2)}，请调整视角或等待投影保护同步后再保存`);
+  }
   const value = V.createView(MODEL_ID, {
     view,
     camera: camera.position.toArray(),
@@ -199,10 +226,11 @@ function describeView(result) {
 }
 function applyView(result) {
   if (!loaded || failed) throw new Error('模型未就绪，无法打开视角');
-  // 运行时核对：距离过近或裁剪面不够都会让模型消失；按文件级校验后再校一次。
-  const distance = result.view.distance;
-  if (distance < Math.max(1, modelExtent * 0.5)) throw new Error(`视角相机距离过近（${distance.toFixed(2)}），应不小于模型包围球半径的一半 ${(modelExtent * 0.5).toFixed(2)}`);
-  if (result.view.far < distance + modelExtent) throw new Error(`视角远裁剪面（${result.view.far}）过小，需要至少 ${(distance + modelExtent).toFixed(2)} 才能看到完整模型`);
+  // 运行时核对：远裁剪面必须留出模型包围空间。
+  // 合法文件保存的相机/目标/FOV/near/far 全部原样恢复，自动调整投影只用于后续缩放，
+  // 不会在打开瞬间悄悄改参数。最小距离由 OrbitControls.minDistance 限制，不必再硬性下限。
+  const fileDistance = result.view.distance;
+  if (result.view.far < fileDistance + modelExtent) throw new Error(`视角远裁剪面（${result.view.far}）过小，需要至少 ${(fileDistance + modelExtent).toFixed(2)} 才能看到完整模型`);
   // 1. 关闭自动旋转；2. 暂时禁用阻尼并 update() 以清空 OrbitControls 残留的旋转/平移增量。
   spin(false);
   const previousDamping = controls.enableDamping;
@@ -213,20 +241,21 @@ function applyView(result) {
   const previousMinPolar = controls.minPolarAngle;
   const previousMaxPolar = controls.maxPolarAngle;
   controls.minDistance = 0;
-  controls.maxDistance = Math.max(rememberedMaxDistance, distance) * 1.01;
+  controls.maxDistance = Math.max(rememberedMaxDistance, fileDistance) * 1.01;
   controls.minPolarAngle = 0;
   controls.maxPolarAngle = Math.PI;
   camera.position.set(result.view.camera[0], result.view.camera[1], result.view.camera[2]);
   controls.target.set(result.view.target[0], result.view.target[1], result.view.target[2]);
   camera.fov = result.view.fov; camera.near = result.view.near; camera.far = result.view.far;
   camera.updateProjectionMatrix(); controls.update();
-  // 4. 恢复缩放下限；maxDistance 与极角上下限都必须永久放宽以保留保存位置：
-  //    OrbitControls.update() 每帧把 spherical.radius 与 spherical.phi 钳到 [minDistance, maxDistance]
-  //    和 [minPolarAngle, maxPolarAngle]，恢复原限制会让保存的真实角度（恰好落在边界的 '正面' 视角）
-  //    被自动旋转回去。允许用户拖动经过极点换来保存视角逐帧稳定，是合理的取舍。
+  // 4. 恢复缩放下限；记住本次距离用于跨视口恢复，但 maxDistance 由 controls.change 监听到的
+  //    fitProjection() 收紧到「camera.far - modelExtent」以内，避免后续 +/- 把模型裁出远裁剪面。
+  //    极角上下限都必须永久放宽以保留保存位置：OrbitControls.update() 每帧把 spherical.radius
+  //    与 spherical.phi 钳到 [minDistance, maxDistance] 和 [minPolarAngle, maxPolarAngle]，
+  //    恢复原限制会让保存的真实角度（恰好落在边界的 '正面' 视角）被自动旋转回去。
+  //    允许用户拖动经过极点换来保存视角逐帧稳定，是合理的取舍。
   controls.minDistance = previousMin;
-  rememberedMaxDistance = Math.max(rememberedMaxDistance, distance);
-  controls.maxDistance = Math.max(distance * 3, rememberedMaxDistance * 1.01);
+  rememberedMaxDistance = Math.max(rememberedMaxDistance, fileDistance);
   controls.minPolarAngle = 0;
   controls.maxPolarAngle = Math.PI;
   viewJustApplied = true;
@@ -262,11 +291,9 @@ $('view-file').addEventListener('change', async () => {
     const input = await file.text(); if (generation !== viewGeneration) return;
     const result = V.parseView(input);
     if (result.modelId !== MODEL_ID) throw new Error('视角对应的模型与当前展台不一致');
-    // 运行时核对：相机距离过近或远裁剪面不足都会让模型消失；按文件级校验后用真实模型包围球再校一次。
-    if (modelExtent > 0) {
-      if (result.view.distance < Math.max(1, modelExtent * 0.5)) throw new Error(`视角相机距离过近（${result.view.distance.toFixed(2)}），需要不小于模型包围球半径的一半 ${(modelExtent * 0.5).toFixed(2)}`);
-      if (result.view.far < result.view.distance + modelExtent) throw new Error(`视角远裁剪面（${result.view.far}）过小，需要至少 ${(result.view.distance + modelExtent).toFixed(2)} 才能显示完整模型`);
-    }
+    // 运行时核对：远裁剪面不足会让模型被裁；文件级校验后用真实模型包围球再校一次。
+    // 最小距离交由 OrbitControls.minDistance 限制，不在这里再加额外下限，避免合法近距离视角被拒。
+    if (modelExtent > 0 && result.view.far < result.view.distance + modelExtent) throw new Error(`视角远裁剪面（${result.view.far}）过小，需要至少 ${(result.view.distance + modelExtent).toFixed(2)} 才能显示完整模型`);
     viewStage = result;
     $('view-file-preview').textContent = describeView(result);
     $('apply-view-file').disabled = false;
@@ -312,4 +339,8 @@ window.addEventListener('pagehide', stop);
 window.CityLandmarks = { getState: () => ({ active, loaded, failed, spinning, wireframe, view, renders,
   visible: !document.hidden, controlState: controls?.state, pendingFrame: Boolean(frame),
   camera: camera?.position.toArray(), target: controls?.target.toArray(), triangles: data.triangles,
+  // 三维投影相关字段：测试可以直接断言「距离 + modelExtent ≤ far」和「maxDistance ≤ far - modelExtent」，
+  // 不必经过间接几何计算；同时与 fitProjection() 单一数据源保持一致。
+  fov: camera?.fov, near: camera?.near, far: camera?.far,
+  modelExtent, maxDistance: controls?.maxDistance,
   contextLost: renderer?.getContext().isContextLost() ?? true }) };
