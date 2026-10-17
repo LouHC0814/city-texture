@@ -105,7 +105,7 @@
       $(slot + '-city').value = city.id; $(slot + '-country').textContent = city.country;
       $(slot + '-district').textContent = city.district; $(slot + '-english').textContent = city.english;
       $(slot + '-coordinates').textContent = coordinates(lon, lat);
-      $(slot + '-provenance').textContent = provenance(city.id);
+      $(slot + '-provenance').textContent = provenance(city.id) + (city.note ? ` · ${city.note}` : '');
       $(slot + '-metrics').replaceChildren(metric('窗口内道路总长', fixed(result.lengthKm), 'km'), metric('路网密度', fixed(result.density, 1), 'km/km²'), metric('方向多样性', result.diversity === null ? '—' : fixed(result.diversity, 1), '/ 100'));
       $(slot + '-reading').textContent = describe(result);
       $(slot + '-building-count').textContent = buildingResults[slot].featureCount.toLocaleString('zh-CN');
@@ -182,7 +182,7 @@
     $('data-details').replaceChildren();
     for (const city of cities) {
       const p = document.createElement('p'), buildings = buildingData[city.id];
-      p.textContent = `${city.name}（${provenance(city.id)}）：道路抓取 ${date(city)}，建筑抓取 ${date(buildings)}（UTC）。建筑 ${buildings.features.length} 个要素，含 ${buildings.conversion.relations} 个多边形关系、${buildings.conversion.innerRings} 个内环，跳过 ${buildings.conversion.skipped.length} 个无法转换的要素。道路/建筑接口快照标识 ${city.source.snapshotToken} / ${buildings.source.snapshotToken}，标识不是日期。`;
+      p.textContent = `${city.name}（${provenance(city.id)}）：道路抓取 ${date(city)}，建筑抓取 ${date(buildings)}（UTC）。建筑 ${buildings.features.length} 个要素，含 ${buildings.conversion.relations} 个多边形关系、${buildings.conversion.innerRings} 个内环，跳过 ${buildings.conversion.skipped.length} 个无法转换的要素。道路/建筑接口快照标识 ${city.source.snapshotToken} / ${buildings.source.snapshotToken}，快照标识不等于本次抓取时间。`;
       $('data-details').append(p);
       if (imported.has(city.id)) for (const [label, data] of [['道路', city], ['建筑', buildings]]) {
         const detail = document.createElement('p'); detail.textContent = `${label}来源：${data.source.endpoint}；原始数据 SHA-256：${data.source.rawSha256}；限制：${data.source.limitations}`; $('data-details').append(detail);
@@ -276,7 +276,7 @@
   $('report').addEventListener('click', () => {
     const reports = ['left', 'right'].map(slot => ({ ...C.report(byId[state[slot]], results[slot], state.walking), sampleId: state[slot], dataProvenance: provenance(state[slot]),
       buildings: { featureCount: buildingResults[slot].featureCount, meaning: '与窗口有正面积交集的 OSM 轮廓要素，不等于独立楼栋或住房数量。', source: buildingData[state[slot]].source, skippedSourceFeatures: buildingData[state[slot]].conversion.skipped.length } }));
-    download(new Blob([JSON.stringify({ version: 3, app: '城市纹理', appVersion: '0.4.0', displayLayer: state.layer, view: C.stateHash(state), createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含道路与建筑的独立来源。');
+    download(new Blob([JSON.stringify({ version: 3, app: '城市纹理', appVersion: '0.5.0', displayLayer: state.layer, view: C.stateHash(state), createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含道路与建筑的独立来源。');
   });
   $('export').addEventListener('click', () => {
     const button = $('export'); button.disabled = true;
@@ -294,9 +294,9 @@
         ctx.fillText(`中心 ${coordinates(lon, lat)}`, x, 1030);
         ctx.fillText(`建筑轮廓 ${buildingResults[slot].featureCount} 个要素（不是楼栋数） · 抓取 ${date(buildingData[city.id])}`, x, 1058);
       });
-      ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText('局部城区快照，不能代表全市；方向多样性不是城市品质评分。局部等距圆柱近似。', 60, 1090);
+      ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText('局部城区快照，不代表全市；方向多样性不是城市品质评分。局部等距圆柱近似，平面图未区分地下/室内层级。', 60, 1090, 1480);
       ctx.fillText('© OpenStreetMap contributors · ODbL 1.0 · https://www.openstreetmap.org/copyright', 60, 1124);
-      ctx.fillText('程序：城市纹理 v0.4 · https://github.com/LouHC0814/city-texture', 60, 1158);
+      ctx.fillText('程序：城市纹理 v0.5 · https://github.com/LouHC0814/city-texture', 60, 1158);
       canvas.toBlob(blob => { button.disabled = false; if (!blob) { notice('生成图片失败，请下载数据报告。'); return; } download(blob, '城市纹理-双城观察卡.png'); notice('双城观察卡已生成。'); }, 'image/png');
     } catch (error) { button.disabled = false; notice('导出失败：' + error.message); }
   });

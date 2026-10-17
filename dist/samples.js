@@ -37,6 +37,7 @@
     if (typeof raw.color !== 'string' || !/^#[a-f0-9]{6}$/i.test(raw.color)) invalid('样本颜色须为六位十六进制色值');
     const city = { id: raw.id, name: text(raw.name, '城市名', 24), english: text(raw.english, '外文名', 48),
       district: text(raw.district, '城区名', 60), country: text(raw.country, '国家或地区', 32), lat: raw.lat, lon: raw.lon, color: raw.color };
+    if (raw.note !== undefined) city.note = text(raw.note, '样本说明', 160);
     function bbox(value) {
       if (!Array.isArray(value) || value.length !== 4 || !value.every(Number.isFinite) || value[0] < -85 || value[2] > 85 || value[1] < -180 || value[3] > 180 || value[0] >= value[2] || value[1] >= value[3]) invalid('下载框须为有效的 [南纬度, 西经度, 北纬度, 东经度]');
       const lower = C.project(value[1], value[0], city), upper = C.project(value[3], value[2], city);

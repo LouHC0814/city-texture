@@ -20,5 +20,16 @@
     "fetchedAt": "2026-10-15T13:29:36.749422+00:00",
     "rawSha256": "a49cbb976cc264c1913ed3f623baeb5ca9b4b49fed8b61cc4957bd11d692c6e5",
     "limitations": "道路为 highway 白名单；步行道可切换。不含建筑。仅为小范围城区窗口，不代表全市。接口快照标识不一定是时间。"
+  },
+  "nanjing": {
+    "name": "OpenStreetMap contributors",
+    "license": "ODbL-1.0",
+    "url": "https://www.openstreetmap.org/copyright",
+    "endpoint": "https://overpass-api.de/api/interpreter",
+    "query": "[out:json][timeout:25];way[highway](32.0386537,118.7730647,32.0485463,118.7847353);out geom;",
+    "snapshotToken": "2026-10-17T03:27:04Z",
+    "fetchedAt": "2026-10-17T03:29:12.285122+00:00",
+    "rawSha256": "056a85dee7f0fdae72ff9022af20f2caf70b37b784d272d7565a0311ead6a648",
+    "limitations": "新街口周边局部 OSM 快照，不代表南京全市；道路按 highway 白名单筛选。 勾选步行道路时含已标注的地下及室内通道；平面图未区分层级。"
   }
 }

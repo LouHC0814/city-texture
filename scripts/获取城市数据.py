@@ -15,11 +15,14 @@ ROOT = Path(__file__).resolve().parents[1]
 CITIES = [
     dict(id="zurich", name="苏黎世", english="ZÜRICH", district="老城与利马特河周边", country="瑞士", lat=47.3740, lon=8.5415, color="#27776c"),
     dict(id="bern", name="伯尔尼", english="BERN", district="老城与阿勒河周边", country="瑞士", lat=46.9480, lon=7.4474, color="#b66043"),
+    dict(id="nanjing", name="南京", english="NANJING", district="新街口周边", country="中国", lat=32.0436, lon=118.7789, color="#566fa8", note="勾选步行道路时含地下及室内通道；平面图未区分层级。"),
 ]
+CITY_ENDPOINTS = {"nanjing": "https://overpass-api.de/api/interpreter"}
 ROAD_TYPES = "motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link"
 
 
-def fetch(city: dict, endpoint: str, force: bool = False, offline: bool = False) -> dict:
+def fetch(city: dict, endpoint: str | None = None, force: bool = False, offline: bool = False) -> dict:
+    endpoint = endpoint or CITY_ENDPOINTS.get(city["id"], "https://overpass.osm.ch/api/interpreter")
     cache = ROOT / ".runtime" / f"{city['id']}-overpass.json"
     half = 0.55
     lat_delta = math.degrees(half / 6371.0088)
@@ -77,7 +80,7 @@ def fetch(city: dict, endpoint: str, force: bool = False, offline: bool = False)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--endpoint", default="https://overpass.osm.ch/api/interpreter")
+    parser.add_argument("--endpoint", help="覆盖接口；默认苏黎世/伯尔尼使用瑞士实例，南京使用全球实例")
     parser.add_argument("--city", choices=[c["id"] for c in CITIES])
     parser.add_argument("--force", action="store_true", help="重新访问接口；默认复用本地缓存")
     parser.add_argument("--offline", action="store_true", help="校验并使用仓库归档的原始数据，完全离线重建 JS 样本")
