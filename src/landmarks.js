@@ -5,6 +5,10 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const $ = id => document.getElementById(id);
 const data = window.CityLandmarkData;
+// 视角保存/打开校验与序列化在 dist/view.js 中独立实现；本模块仅通过 window 引用。
+const V = window.CityView;
+const MODEL_ID = 'eiffel-tower';
+const PRESET_NAMES = { iso: '立体视角', front: '正面', top: '俯视', custom: '自定义视角' };
 let active = false, loading = null, loaded = false, failed = false, spinning = false, frame = 0, renders = 0;
 let renderer, scene, camera, controls, model, environment, canvas, distance = 24, view = 'iso', wireframe = false;
 let glbBuffer;
@@ -145,6 +149,72 @@ function activate(value) {
   if (!loading) loading = init();
   else if (loaded) { size(); requestRender(); }
 }
+function captureView() {
+  if (!loaded || !camera || !controls || failed) throw new Error('模型未就绪，无法保存视角');
+  const value = V.createView(MODEL_ID, {
+    view,
+    camera: camera.position.toArray(),
+    target: controls.target.toArray(),
+    fov: camera.fov,
+    near: camera.near,
+    far: camera.far
+  }, wireframe);
+  return JSON.stringify(value, null, 2);
+}
+function describeView(result) {
+  const preset = PRESET_NAMES[result.view.view] || '自定义视角';
+  const distance = result.view.distance.toFixed(2);
+  return `${preset} · 距离 ${distance} · FOV ${result.view.fov.toFixed(1)}° · ${result.wireframe ? '线框模式' : '实体模式'}`;
+}
+function applyView(result) {
+  if (!loaded || failed) throw new Error('模型未就绪，无法打开视角');
+  spin(false);
+  camera.position.set(result.view.camera[0], result.view.camera[1], result.view.camera[2]);
+  controls.target.set(result.view.target[0], result.view.target[1], result.view.target[2]);
+  camera.fov = result.view.fov; camera.near = result.view.near; camera.far = result.view.far;
+  camera.updateProjectionMatrix(); controls.update();
+  view = result.view.view;
+  document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === view)));
+  setWireframe(result.wireframe); $('landmark-wireframe').checked = result.wireframe;
+  requestRender();
+}
+const viewDialog = $('landmark-view-dialog');
+let viewGeneration = 0, viewStage = null;
+function clearViewPreview() { viewStage = null; $('apply-view-file').disabled = true; $('view-file-preview').textContent = ''; }
+$('save-view').addEventListener('click', () => {
+  if (!loaded || failed) { status('模型未就绪，无法保存视角'); return; }
+  try {
+    const json = captureView();
+    save(new Blob([json], { type: 'application/json' }), '城市纹理-三维视角.json');
+    status('视角已下载为 城市纹理-三维视角.json。请在同版本预览中点“打开三维视角”恢复。');
+  } catch (failure) { status('保存视角失败：' + failure.message); }
+});
+$('open-view').addEventListener('click', () => {
+  if (!loaded || failed) { status('请先准备好模型，再打开视角文件'); return; }
+  viewGeneration++; clearViewPreview(); $('view-file-error').textContent = ''; $('view-file').value = '';
+  viewDialog.showModal();
+});
+$('close-view-dialog').addEventListener('click', () => viewDialog.close());
+viewDialog.addEventListener('close', () => { viewGeneration++; clearViewPreview(); });
+$('view-file').addEventListener('change', async () => {
+  const generation = ++viewGeneration, file = $('view-file').files[0]; clearViewPreview(); $('view-file-error').textContent = '';
+  if (!file) return;
+  $('view-file-preview').textContent = '正在检查视角文件…';
+  try {
+    if (file.size > V.MAX_BYTES) throw new Error(`视角文件不能超过 ${V.MAX_BYTES} 字节`);
+    const input = await file.text(); if (generation !== viewGeneration) return;
+    const result = V.parseView(input);
+    if (result.modelId !== MODEL_ID) throw new Error('视角对应的模型与当前展台不一致');
+    viewStage = result;
+    $('view-file-preview').textContent = describeView(result);
+    $('apply-view-file').disabled = false;
+  } catch (failure) { if (generation === viewGeneration) { clearViewPreview(); $('view-file-error').textContent = failure.message; } }
+});
+$('view-file-form').addEventListener('submit', event => {
+  event.preventDefault(); if (!viewStage) return;
+  try { applyView(viewStage); viewDialog.close(); status('已打开三维视角，恢复预设、距离、缩放和线框。'); }
+  catch (failure) { $('view-file-error').textContent = failure.message; }
+});
 document.querySelectorAll('[data-observation]').forEach(button => button.addEventListener('click', () => {
   const three = button.dataset.observation === 'landmark';
   $('landmark-showcase').hidden = !three; $('map-workspace').hidden = three; document.querySelector('.notes').hidden = three;

@@ -262,6 +262,76 @@ async function until(callback, label, timeout = 10000) {
     const stoppedRenders = (await landmarkState()).renders; await delay(120); assert.equal((await landmarkState()).renders, stoppedRenders, '隐藏三维模式时停止绘制');
     await openLandmark(); assert.ok(cameraDistance(await landmarkState()) > 10, '切回三维模式保留有效镜头距离');
     assert.ok(await landmarkPixels() > 2000, '切回三维模式仍能看到完整模型');
+    // 三维视角保存与恢复：必须通过真实文件选择、预览和应用，不能只靠 Node 读取。
+    const viewDownloads = path.join(runtime, 'view-downloads'); await fs.mkdir(viewDownloads);
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: viewDownloads });
+    await cdp.evaluate("document.querySelector('[data-camera=front]').click();document.getElementById('landmark-wireframe').click()");
+    await delay(200);
+    const savedViewFile = '城市纹理-三维视角.json';
+    await cdp.evaluate("document.getElementById('save-view').click()");
+    const viewPath = path.join(viewDownloads, savedViewFile);
+    await until(async () => (await fs.readdir(viewDownloads)).includes(savedViewFile), '三维视角 JSON 下载');
+    const savedViewRaw = await fs.readFile(viewPath, 'utf8');
+    const savedView = JSON.parse(savedViewRaw);
+    assert.equal(savedView.format, 'city-texture-view'); assert.equal(savedView.version, 1);
+    assert.equal(savedView.modelId, 'eiffel-tower'); assert.equal(savedView.view.view, 'front'); assert.equal(savedView.wireframe, true);
+    assert.ok(savedViewRaw.charCodeAt(0) !== 0xFEFF, 'JSON 默认不带 BOM');
+    assert.ok(new TextEncoder().encode(savedViewRaw).byteLength <= 16384, '视角文件未超过 16 KiB');
+    assert.deepEqual(savedView.view.camera, (await landmarkState()).camera);
+    assert.deepEqual(savedView.view.target, (await landmarkState()).target);
+    await cdp.evaluate("document.querySelector('[data-camera=top]').click();document.getElementById('landmark-wireframe').click()");
+    const afterChange = await landmarkState();
+    assert.notDeepEqual(afterChange.camera, savedView.view.camera, '切到俯视后相机位置改变');
+    assert.notDeepEqual(afterChange.view, 'front', '当前预设已切换到俯视');
+    await cdp.evaluate("document.getElementById('open-view').click()");
+    assert.equal(await cdp.evaluate("document.getElementById('landmark-view-dialog').open"), true);
+    const docForView = await cdp.call('DOM.getDocument'); const viewFileInput = await cdp.call('DOM.querySelector', { nodeId: docForView.root.nodeId, selector: '#view-file' });
+    await cdp.call('DOM.setFileInputFiles', { nodeId: viewFileInput.nodeId, files: [viewPath] });
+    await until(() => cdp.evaluate("document.getElementById('apply-view-file').disabled === false"), '视角预览就绪');
+    const previewText = await cdp.evaluate("document.getElementById('view-file-preview').textContent");
+    assert.ok(previewText.includes('正面'), `预览应描述保存的视角：${previewText}`);
+    assert.equal(await cdp.evaluate("document.getElementById('view-file-error').textContent"), '');
+    await cdp.evaluate("document.getElementById('view-file-form').requestSubmit()");
+    assert.equal(await cdp.evaluate("document.getElementById('landmark-view-dialog').open"), false);
+    await delay(180);
+    const restoredView = await landmarkState();
+    assert.deepEqual(restoredView.camera, savedView.view.camera, '视角恢复相机位置');
+    assert.deepEqual(restoredView.target, savedView.view.target, '视角恢复观察目标');
+    assert.equal(restoredView.view, 'front', '视角恢复预设');
+    assert.equal(restoredView.wireframe, true, '视角恢复线框');
+    await screenshot('三维视角保存与恢复.png');
+    // 错误与跨模型视角必须被拒绝；当前比较保持不变。
+    const stateBeforeReject = await landmarkState();
+    const otherModelView = JSON.parse(savedViewRaw); otherModelView.modelId = 'louvre-pyramid';
+    const wrongModelPath = path.join(viewDownloads, 'wrong-model.json');
+    await fs.writeFile(wrongModelPath, JSON.stringify(otherModelView));
+    await cdp.evaluate("document.getElementById('open-view').click()");
+    const docWrong = await cdp.call('DOM.getDocument'); const wrongInput = await cdp.call('DOM.querySelector', { nodeId: docWrong.root.nodeId, selector: '#view-file' });
+    await cdp.call('DOM.setFileInputFiles', { nodeId: wrongInput.nodeId, files: [wrongModelPath] });
+    await until(() => cdp.evaluate("document.getElementById('view-file-error').textContent.length > 0"), '跨模型视角被拒绝');
+    assert.ok((await cdp.evaluate("document.getElementById('view-file-error').textContent")).includes('模型'));
+    assert.equal(await cdp.evaluate("document.getElementById('apply-view-file').disabled"), true, '错误输入不启用应用按钮');
+    await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+    assert.deepEqual(await landmarkState(), stateBeforeReject, '取消错误视角不影响当前镜头');
+    const brokenViewPath = path.join(viewDownloads, 'broken.json'); await fs.writeFile(brokenViewPath, '{broken');
+    await cdp.evaluate("document.getElementById('open-view').click()");
+    const docBroken = await cdp.call('DOM.getDocument'); const brokenInput = await cdp.call('DOM.querySelector', { nodeId: docBroken.root.nodeId, selector: '#view-file' });
+    await cdp.call('DOM.setFileInputFiles', { nodeId: brokenInput.nodeId, files: [brokenViewPath] });
+    await until(() => cdp.evaluate("document.getElementById('view-file-error').textContent.length > 0"), '损坏 JSON 被拒绝');
+    assert.equal(await cdp.evaluate("document.getElementById('apply-view-file').disabled"), true);
+    await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+    assert.deepEqual(await landmarkState(), stateBeforeReject);
+    // 跨格式：把比较项目当作视角文件提交，必须拒绝并保留现状。
+    const projectAsView = { format: 'city-texture-project', version: 1, view: '#v=3&a=zurich&b=bern' };
+    const projectViewPath = path.join(viewDownloads, 'project.json'); await fs.writeFile(projectViewPath, JSON.stringify(projectAsView));
+    await cdp.evaluate("document.getElementById('open-view').click()");
+    const docProj = await cdp.call('DOM.getDocument'); const projInput = await cdp.call('DOM.querySelector', { nodeId: docProj.root.nodeId, selector: '#view-file' });
+    await cdp.call('DOM.setFileInputFiles', { nodeId: projInput.nodeId, files: [projectViewPath] });
+    await until(() => cdp.evaluate("document.getElementById('view-file-error').textContent.length > 0"), '比较项目被拒绝');
+    await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+    assert.deepEqual(await landmarkState(), stateBeforeReject, '跨格式拒绝不改变当前镜头');
+    // 退出三维模式前恢复 iso 视角，便于后续浏览器检查继续运行。
+    await cdp.evaluate("document.querySelector('[data-camera=iso]').click();document.getElementById('landmark-wireframe').click()");
     await cdp.evaluate("document.querySelector('[data-observation=map]').click()");
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
     // 新的真实南京样本必须经过真实选择、移动、恢复和下载，不能只靠 Node 读取数据。
@@ -501,7 +571,7 @@ async function until(callback, label, timeout = 10000) {
     await cdp.evaluate("document.querySelector('[data-observation=map]').click()"); await checkProjectRestored();
     assert.equal(cdp.errors.length, 0, JSON.stringify(cdp.errors));
     await fs.copyFile(path.join(downloads, pngName), path.join(screenshotDir, '双城观察卡.png'));
-    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['三维 WebGL 实际钢架像素', '鼠标旋转与键盘相机', '三种三维预设视角', '三维缩放自动旋转线框与重置', 'GLB 与署名三维观察卡实际下载', '图形丢失与不可用后的重试', '隐藏三维停止绘制', '手机单指旋转与双指缩放', '断网单文件三维模型', '完整比较项目实际下载与重新打开', '三份导入样本整体替换', '项目预览与取消', '项目慢读取取消', '损坏缺失冒用内置与超大项目保护', '手机与断网项目恢复', '三种图层真实画布', '真实内院像素保留', '建筑统计随移动变化', '道路与建筑独立来源导出', '四种尺度双侧统计', '鼠标左右图拖动', '键盘平移与Home', '共同边界限制', '缩放重新约束', '复制视图(隔离剪贴板接口)', '手动复制后备路径', '恢复与错误输入保护', '实际平移中心导出', '手机触摸拖动', '步行开关', '交换及选择城市', '同城一致性', '旧URL兼容', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['经典建筑3D预览.png', '经典建筑3D手机预览.png', '经典建筑3D观察卡.png', '比较项目预览.png', '比较项目手机预览.png', '桌面预览.png', '建筑图层预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
+    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['三维 WebGL 实际钢架像素', '鼠标旋转与键盘相机', '三种三维预设视角', '三维缩放自动旋转线框与重置', 'GLB 与署名三维观察卡实际下载', '图形丢失与不可用后的重试', '隐藏三维停止绘制', '手机单指旋转与双指缩放', '断网单文件三维模型', '三维视角 JSON 实际下载与字段校验', '切视角后保存的相机/目标实际恢复', '视角预览文本描述预设与距离', '跨模型视角被拒绝并保留当前镜头', '损坏 JSON 与跨格式文件被拒绝', '完整比较项目实际下载与重新打开', '三份导入样本整体替换', '项目预览与取消', '项目慢读取取消', '损坏缺失冒用内置与超大项目保护', '手机与断网项目恢复', '三种图层真实画布', '真实内院像素保留', '建筑统计随移动变化', '道路与建筑独立来源导出', '四种尺度双侧统计', '鼠标左右图拖动', '键盘平移与Home', '共同边界限制', '缩放重新约束', '复制视图(隔离剪贴板接口)', '手动复制后备路径', '恢复与错误输入保护', '实际平移中心导出', '手机触摸拖动', '步行开关', '交换及选择城市', '同城一致性', '旧URL兼容', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['经典建筑3D预览.png', '经典建筑3D手机预览.png', '经典建筑3D观察卡.png', '三维视角保存与恢复.png', '比较项目预览.png', '比较项目手机预览.png', '桌面预览.png', '建筑图层预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
     console.log('浏览器检查通过：真实三维 WebGL 像素、旋转/缩放/多视角、键盘/触摸/双指、GLB/署名PNG、图形故障恢复、断网三维；比较项目真实下载/重新打开、三份导入样本整体恢复与替换、预览/取消/慢读取取消、损坏/冒用内置/缺失样本/超大文件保护、手机与断网项目恢复；原有样本和地图交互检查通过，JavaScript 异常 0。');
   } catch (e) { console.error(logs); throw e; }
   finally {
