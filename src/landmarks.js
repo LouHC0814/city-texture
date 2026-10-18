@@ -15,10 +15,15 @@ let renderer, scene, camera, controls, model, environment, canvas, distance = 24
 let modelExtent = 0;
 // applyView() 设 true 后让 size() 跳过这次缩放，避免在恢复后被 OrbitControls 静默截断。
 let viewJustApplied = false;
-// 视角文件保存的距离上限：跨视口恢复时（例如移动端保存→桌面端打开），savedDistance 可能超过
-// 当前 size() 算出的 maxDistance；OrbitControls.update() 每帧都会把 spherical.radius 钳制到
-// [minDistance, maxDistance]，必须把 maxDistance 永久撑大，否则下一帧就把相机位置静默截回。
+// 跨视口恢复时（例如移动端保存→桌面端打开），savedDistance 可能超过当前 size() 算出的 maxDistance；
+// OrbitControls.update() 每帧都会把 spherical.radius 钳制到 [minDistance, maxDistance]，必须把 maxDistance
+// 永久撑大，否则下一帧就把相机位置静默截回。
 let rememberedMaxDistance = 0;
+// applyView() 期间为 true，让 controls.change 监听跳过 fitProjection()。
+// 原因：applyView 内主动调 controls.update() 会触发 change，如果同步跑 fitProjection，
+// 它会用「distance + modelExtent + 1」补 far 并改 controls.maxDistance，
+// 导致文件保存的 far 在应用瞬间被静默改写、交互上限被锁到 savedFile 距离附近。
+let applyingView = false;
 // 视角文件保存的远裁剪面上限，与 dist/view.js 中 `checkNumber('far', view.far, view.near + 0.1, 10000)`
 // 保持一致：fitProjection 拉大 far 时不超过 10000，保证新保存的文件可以被同一套校验再次接受。
 const FAR_LIMIT = 10000;
@@ -75,7 +80,11 @@ function size() {
   viewJustApplied = false;
   // 若视角文件保存的距离比当前视口的最大距离大，则必须撑大 maxDistance。
   // 否则下一次 OrbitControls.update() 会把 spherical.radius 静默截回。
-  controls.minDistance = 3; controls.maxDistance = Math.max(distance * 3, rememberedMaxDistance * 1.01);
+  controls.minDistance = 3;
+  {
+    const resizeCeiling = Math.max(controls.minDistance + 0.5, Math.min(camera.far - modelExtent, FAR_LIMIT - modelExtent));
+    controls.maxDistance = Math.max(distance * 3, Math.min(resizeCeiling, rememberedMaxDistance * 1.01));
+  }
   requestRender();
 }
 function angle(phi, theta, radius = camera.position.distanceTo(controls.target)) {
@@ -93,6 +102,17 @@ function preset(name) {
   controls.minPolarAngle = 0;
   controls.maxPolarAngle = Math.PI / 2 - 0.015;
   angle(name === 'top' ? 0.035 : name === 'front' ? Math.PI / 2 : 1.08, name === 'front' ? 0 : Math.PI / 4, distance);
+  // 切换预设或重置时恢复默认交互上限，避免 applyView 设置的 savedFile 适配距离把后续 +/- 锁死。
+  // 这里绕过 fitProjection 直接覆盖，让重置后能立刻拉到 viewport 适配距离的 3 倍。
+  applyingView = true;
+  try {
+    controls.minDistance = 3;
+    // preset 重置不靠 savedFarCeiling（没具体文件），用 viewportDistance * 3 作为上限；
+    // rememberedMaxDistance 只在「跨视口恢复后再 preset」场景用到，自身不能越过相机当时的远裁剪面，
+    // 否则后续 +/- 会把模型裁出远裁剪面。取 camera.far - modelExtent 与 rememberedMaxDistance*1.01 之中较小者。
+    const presetCeiling = Math.max(controls.minDistance + 0.5, Math.min(camera.far - modelExtent, FAR_LIMIT - modelExtent));
+    controls.maxDistance = Math.max(distance * 3, Math.min(presetCeiling, rememberedMaxDistance * 1.01));
+  } finally { applyingView = false; }
   document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === name)));
 }
 function spin(value) {
@@ -142,7 +162,7 @@ async function init() {
     camera = new THREE.PerspectiveCamera(40, 1, 0.1, 180);
     controls = new OrbitControls(camera, canvas); controls.enableDamping = true; controls.dampingFactor = 0.12;
     controls.maxPolarAngle = Math.PI / 2 - 0.015; controls.autoRotateSpeed = 0.7; controls.autoRotate = spinning;
-    controls.addEventListener('change', () => { fitProjection(); requestRender(); });
+    controls.addEventListener('change', () => { if (!applyingView) fitProjection(); requestRender(); });
     controls.addEventListener('start', () => { spin(false); });
     // 用户拖动/平移/双指缩放结束后，相机不再匹配任何预设：标记为 custom 防止预览误称。
     // 视角文件刚应用后也可能触到 end，需要先把 viewJustApplied 清掉再标 custom，避免「打开视角后直接拖动
@@ -228,36 +248,50 @@ function applyView(result) {
   if (!loaded || failed) throw new Error('模型未就绪，无法打开视角');
   // 运行时核对：远裁剪面必须留出模型包围空间。
   // 合法文件保存的相机/目标/FOV/near/far 全部原样恢复，自动调整投影只用于后续缩放，
-  // 不会在打开瞬间悄悄改参数。最小距离由 OrbitControls.minDistance 限制，不必再硬性下限。
+  // 不会在打开瞬间悄悄改参数。最小距离取 previousMin 与 fileDistance*1.05 之中较小的值，
+  // 既保留近距离观察能力，又让 savedFile 距离不被下一帧 update() 钳到 previousMin。
   const fileDistance = result.view.distance;
   if (result.view.far < fileDistance + modelExtent) throw new Error(`视角远裁剪面（${result.view.far}）过小，需要至少 ${(fileDistance + modelExtent).toFixed(2)} 才能看到完整模型`);
-  // 1. 关闭自动旋转；2. 暂时禁用阻尼并 update() 以清空 OrbitControls 残留的旋转/平移增量。
-  spin(false);
-  const previousDamping = controls.enableDamping;
-  controls.enableDamping = false; controls.update(); controls.enableDamping = previousDamping;
-  // 3. 临时放宽 OrbitControls 的缩放上下限与极角上下限，避免 update() 把保存位置
-  //    截到当前视口的最大/最小距离或最大俯仰角度（极角钳位会调整 theta 让相机绕回）。
-  const previousMin = controls.minDistance;
-  const previousMinPolar = controls.minPolarAngle;
-  const previousMaxPolar = controls.maxPolarAngle;
-  controls.minDistance = 0;
-  controls.maxDistance = Math.max(rememberedMaxDistance, fileDistance) * 1.01;
-  controls.minPolarAngle = 0;
-  controls.maxPolarAngle = Math.PI;
-  camera.position.set(result.view.camera[0], result.view.camera[1], result.view.camera[2]);
-  controls.target.set(result.view.target[0], result.view.target[1], result.view.target[2]);
-  camera.fov = result.view.fov; camera.near = result.view.near; camera.far = result.view.far;
-  camera.updateProjectionMatrix(); controls.update();
-  // 4. 恢复缩放下限；记住本次距离用于跨视口恢复，但 maxDistance 由 controls.change 监听到的
-  //    fitProjection() 收紧到「camera.far - modelExtent」以内，避免后续 +/- 把模型裁出远裁剪面。
-  //    极角上下限都必须永久放宽以保留保存位置：OrbitControls.update() 每帧把 spherical.radius
-  //    与 spherical.phi 钳到 [minDistance, maxDistance] 和 [minPolarAngle, maxPolarAngle]，
-  //    恢复原限制会让保存的真实角度（恰好落在边界的 '正面' 视角）被自动旋转回去。
-  //    允许用户拖动经过极点换来保存视角逐帧稳定，是合理的取舍。
-  controls.minDistance = previousMin;
-  rememberedMaxDistance = Math.max(rememberedMaxDistance, fileDistance);
-  controls.minPolarAngle = 0;
-  controls.maxPolarAngle = Math.PI;
+  // 应用全程屏蔽 fitProjection：避免 applyView 内部的 controls.update() 触发 change 后
+  // fitProjection() 立即按当前 distance 拉大 camera.far，造成文件级 far 被改写；同时避免
+  // 它把 controls.maxDistance 收紧到 savedFile 附近把后续 +/- 锁死。
+  const previousApplying = applyingView;
+  applyingView = true;
+  try {
+    // 1. 关闭自动旋转；2. 暂时禁用阻尼并 update() 以清空 OrbitControls 残留的旋转/平移增量。
+    spin(false);
+    const previousDamping = controls.enableDamping;
+    controls.enableDamping = false; controls.update(); controls.enableDamping = previousDamping;
+    // 3. 临时放宽 OrbitControls 的缩放上下限与极角上下限，避免 update() 把保存位置
+    //    截到当前视口的最大/最小距离或最大俯仰角度（极角钳位会调整 theta 让相机绕回）。
+    const previousMin = controls.minDistance;
+    const previousMinPolar = controls.minPolarAngle;
+    const previousMaxPolar = controls.maxPolarAngle;
+    controls.minDistance = 0;
+    controls.maxDistance = Math.max(rememberedMaxDistance, fileDistance) * 1.01;
+    controls.minPolarAngle = 0;
+    controls.maxPolarAngle = Math.PI;
+    camera.position.set(result.view.camera[0], result.view.camera[1], result.view.camera[2]);
+    controls.target.set(result.view.target[0], result.view.target[1], result.view.target[2]);
+    camera.fov = result.view.fov; camera.near = result.view.near; camera.far = result.view.far;
+    camera.updateProjectionMatrix(); controls.update();
+    // 4. 恢复缩放下限与上限。minDistance 不再硬钉到 previousMin，以免 savedFile < previousMin 时
+    //    被下一帧 update() 钳走；取 previousMin 与 fileDistance*1.05 之中较小的一个。
+    //    maxDistance 用 viewport 适配距离 * 3、savedFarCeiling、rememberedMaxDistance*1.01 三者最大，
+    //    保证后续 +/- / 滚轮 / 双指 都还能正常拉远；fitProjection 在 applyingView=false 之后的
+    //    用户真实交互才会触发收紧。
+    // savedFile 距离必须 ≥ minDistance，否则下一帧 update() 会把 spherical.radius 钳到 minDistance 以下导致 savedFar 丢失；
+    // 多数情况下 previousMin=3 留作近距离缩放的下限；当 savedFile < previousMin 时，临时把 minDistance 调到略小于 savedFile，
+    // 让 OrbitControls 不再被钳。后续用户真实 +/- 之前这个值不会变化（preset/size 会重置）。
+    controls.minDistance = fileDistance < previousMin ? Math.max(1, fileDistance * 0.999) : previousMin;
+    rememberedMaxDistance = Math.max(rememberedMaxDistance, fileDistance);
+    const savedFarCeiling = Math.max(controls.minDistance + 0.5, Math.min(camera.far - modelExtent, FAR_LIMIT - modelExtent));
+    controls.maxDistance = Math.max(distance * 3, Math.min(savedFarCeiling, rememberedMaxDistance * 1.01));
+    controls.minPolarAngle = 0;
+    controls.maxPolarAngle = Math.PI;
+  } finally {
+    applyingView = previousApplying;
+  }
   viewJustApplied = true;
   view = result.view.view;
   document.querySelectorAll('[data-camera]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.camera === view)));
@@ -342,5 +376,5 @@ window.CityLandmarks = { getState: () => ({ active, loaded, failed, spinning, wi
   // 三维投影相关字段：测试可以直接断言「距离 + modelExtent ≤ far」和「maxDistance ≤ far - modelExtent」，
   // 不必经过间接几何计算；同时与 fitProjection() 单一数据源保持一致。
   fov: camera?.fov, near: camera?.near, far: camera?.far,
-  modelExtent, maxDistance: controls?.maxDistance,
+  modelExtent, minDistance: controls?.minDistance, maxDistance: controls?.maxDistance,
   contextLost: renderer?.getContext().isContextLost() ?? true }) };

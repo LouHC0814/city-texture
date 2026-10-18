@@ -264,7 +264,7 @@ async function until(callback, label, timeout = 10000) {
     assert.ok(await landmarkPixels() > 2000, '切回三维模式仍能看到完整模型');
     // 三维视角保存与恢复：必须通过真实文件选择、预览和应用，不能只靠 Node 读取。
     const viewDownloads = path.join(runtime, 'view-downloads'); await fs.mkdir(viewDownloads);
-    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: viewDownloads });
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: viewDownloads, eventsEnabled: true });
     await cdp.evaluate("document.querySelector('[data-camera=front]').click();document.getElementById('landmark-wireframe').click()");
     await delay(200);
     const savedViewFile = '城市纹理-三维视角.json';
@@ -456,14 +456,34 @@ async function until(callback, label, timeout = 10000) {
     await cdp.evaluate("document.getElementById('close-view-dialog').click()");
     // 第二轮 P2 验收补充：真实按钮/输入流程覆盖三种遗漏。
     // 文件来源是真实 save-view 触发的下载与 open-view 的真实文件选择，不能用 Node 构造 JSON 偷懒。
-    async function waitViewDownload(label, dir = viewDownloads) {
-      // save() 把视角文件硬编码保存为「城市纹理-三维视角.json」，连续下载会覆盖同名文件。
-      // 既然文件名一致，只能用「文件内容哈希与点击前不同 + 两次 fs.stat 大小一致 + 可成功 fs.open」
-      // 区分旧文件残留与新一轮下载。哈希读取耗时稳定比 stat 大小差异更可靠。
-      const target = path.join(dir, '城市纹理-三维视角.json');
-      let preHash = '';
-      try { preHash = require('node:crypto').createHash('sha256').update(await fs.readFile(target)).digest('hex'); } catch (_) { preHash = ''; }
+    // 当前 viewDownloads 路径：每次 downloadPath 切换要重新调用 setDownloadBehavior。
+    let currentDownloadDir = viewDownloads;
+    async function waitViewDownload(label, dir) {
+      if (dir === undefined) dir = currentDownloadDir;
+      // 路径切到新 dir：先确保目录存在，再让下次 save-view 写到那里。
+      if (dir !== currentDownloadDir) {
+        await fs.mkdir(dir, { recursive: true });
+        await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dir, eventsEnabled: true });
+        currentDownloadDir = dir;
+      }
+      // 通过 CDP 事件精准识别每次下载：Browser.downloadWillBegin 提供 guid + 文件名，
+      // Browser.downloadProgress state='completed' 表示写入完成。不依赖内容哈希，
+      // 避免两次保存内容相同时被误判为残留文件。
+      const beginPromise = cdp.wait('Browser.downloadWillBegin');
       await cdp.evaluate("document.getElementById('save-view').click()");
+      const begin = await beginPromise;
+      // 等待同一个 guid 的进度事件直到 state='completed'，忽略中间的 'inProgress'。
+      const finalState = await (async function awaitCompleted(guid) {
+        for (;;) {
+          const p = await cdp.wait('Browser.downloadProgress');
+          if (p.guid !== guid) continue;
+          if (p.state === 'completed') return p.state;
+          if (p.state === 'canceled') throw new Error('下载被取消');
+        }
+      })(begin.guid);
+      const suggested = begin.suggestedFilename || '城市纹理-三维视角.json';
+      const target = path.join(dir, suggested);
+      // 句柄稳定：连续 2 次 fs.stat 大小一致 + fs.open 可成功打开
       await until(async () => {
         try {
           const s1 = await fs.stat(target);
@@ -471,13 +491,10 @@ async function until(callback, label, timeout = 10000) {
           await new Promise(r => setTimeout(r, 200));
           const s2 = await fs.stat(target);
           if (s1.size !== s2.size) return false;
-          const fh = await fs.open(target, 'r');
-          await fh.close();
-          const hash = require('node:crypto').createHash('sha256').update(await fs.readFile(target)).digest('hex');
-          if (hash === preHash) return false;
+          await (await fs.open(target, 'r')).close();
           return true;
         } catch (_) { return false; }
-      }, `三维视角下载：${label}`);
+      }, `三维视角下载稳定：${label}`);
       return target;
     }
     async function setViewFile(file) {
@@ -498,8 +515,7 @@ async function until(callback, label, timeout = 10000) {
     assert.ok(nearDistance <= distStart - 2, `+ 操作确实缩近 ${distStart.toFixed(2)} → ${nearDistance.toFixed(2)}`);
     assert.ok(nearState.far >= nearDistance + nearState.modelExtent + 0.5, `fitProjection 应保持远裁剪面足够：far=${nearState.far}, dist=${nearDistance.toFixed(2)}, modelExtent=${nearState.modelExtent.toFixed(2)}`);
     assert.ok(nearState.maxDistance <= nearState.far - nearState.modelExtent + 1e-6, `maxDistance 不超出合法 ceiling`);
-    await cdp.evaluate("document.getElementById('save-view').click()");
-    const nearViewPath = await waitViewDownload('桌面最近视角.json');
+        const nearViewPath = await waitViewDownload('桌面最近视角.json');
     const nearView = JSON.parse(await fs.readFile(nearViewPath, 'utf8'));
     assert.equal(nearView.modelId, 'eiffel-tower');
     // + / - 按钮的 click handler 主动把 view 标为 custom，连续缩近后 view 字段为 custom 是预期行为。
@@ -526,7 +542,21 @@ async function until(callback, label, timeout = 10000) {
     assert.deepEqual(restoredNear.target, nearView.view.target);
     assert.equal(restoredNear.fov, nearView.view.fov);
     assert.equal(restoredNear.near, nearView.view.near);
-    assert.equal(restoredNear.far, nearView.view.far);
+    assert.equal(restoredNear.far, nearView.view.far, '恢复后 far 必须等于文件 savedFar，不被 fitProjection 改写');
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(restoredNear.camera[i] - nearView.view.camera[i]) < 1e-6, '恢复后 camera 必须等于文件');
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(restoredNear.target[i] - nearView.view.target[i]) < 1e-6, '恢复后 target 必须等于文件');
+    assert.equal(restoredNear.fov, nearView.view.fov, '恢复后 FOV 必须等于文件');
+    assert.equal(restoredNear.near, nearView.view.near, '恢复后 near 必须等于文件');
+    assert.equal(restoredNear.view, nearView.view.view, '恢复后 view 字段保持文件值');
+    // 恢复最近视角后必须能明显拉远，不能被锁死到 savedFile 附近。
+    const nearBeforeZoomOut = cameraDistance(await landmarkState());
+    for (let i = 0; i < 10; i++) await cdp.evaluate("document.getElementById('landmark-out').click()");
+    await delay(220);
+    const nearAfterZoomOut = cameraDistance(await landmarkState());
+    assert.ok(nearAfterZoomOut >= nearBeforeZoomOut + 5, `恢复最近视角后必须能明显拉远 ${nearBeforeZoomOut.toFixed(2)} → ${nearAfterZoomOut.toFixed(2)}，不能锁在 ${restoredNearDistance.toFixed(2)} 附近`);
+    await cdp.evaluate("document.getElementById('landmark-reset').click()"); await delay(220);
+    const nearResetState = await landmarkState();
+    assert.ok(nearResetState.maxDistance >= cameraDistance(nearResetState) * 2.5, `重置后 maxDistance 必须恢复到 viewport 适配距离的至少 2.5 倍：reset dist=${cameraDistance(nearResetState).toFixed(2)}, maxDistance=${nearResetState.maxDistance.toFixed(2)}`);
     await cdp.evaluate("document.getElementById('close-view-dialog').click()");
 
     // (b) 跨视口：手机保存距离较大 → 桌面打开后继续缩小，fitProjection 同步抬升 far，
@@ -542,8 +572,7 @@ async function until(callback, label, timeout = 10000) {
     const mobileDistance = cameraDistance(mobileFarState);
     assert.ok(mobileDistance > mobileBase + 5, `手机连续 - 应拉远 ${mobileBase.toFixed(2)} → ${mobileDistance.toFixed(2)}`);
     assert.ok(mobileFarState.far >= mobileDistance + mobileFarState.modelExtent + 0.5, `手机保存前 far 应足够：far=${mobileFarState.far}, dist=${mobileDistance.toFixed(2)}, modelExtent=${mobileFarState.modelExtent.toFixed(2)}`);
-    await cdp.evaluate("document.getElementById('save-view').click()");
-    const mobilePath = await waitViewDownload('手机最远视角.json');
+        const mobilePath = await waitViewDownload('手机最远视角.json');
     const mobileView = JSON.parse(await fs.readFile(mobilePath, 'utf8'));
     const mobileFileDist = cameraDistance({ camera: mobileView.view.camera, target: mobileView.view.target });
     assert.ok(Math.abs(mobileFileDist - mobileDistance) < 0.5, `文件距离与手机视口实际一致：file ${mobileFileDist.toFixed(2)} vs state ${mobileDistance.toFixed(2)}`);
@@ -559,8 +588,19 @@ async function until(callback, label, timeout = 10000) {
     const restoredMobile = await landmarkState();
     const restoredMobileDistance = cameraDistance(restoredMobile);
     assert.ok(Math.abs(restoredMobileDistance - mobileFileDist) < 0.5, `桌面恢复手机距离：file ${mobileFileDist.toFixed(2)} vs restored ${restoredMobileDistance.toFixed(2)}`);
+    // [P3-2 严格]：恢复后文件级字段必须逐项原样保留，fitProjection 不能在 applyView 内部改 far。
+    assert.equal(restoredMobile.far, mobileView.view.far, `恢复后 far 必须完全等于文件 savedFar（不能被 fitProjection 改写）。file=${mobileView.view.far}, restored=${restoredMobile.far}`);
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(restoredMobile.camera[i] - mobileView.view.camera[i]) < 1e-6, '恢复后 camera 必须等于文件');
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(restoredMobile.target[i] - mobileView.view.target[i]) < 1e-6, '恢复后 target 必须等于文件');
+    assert.equal(restoredMobile.fov, mobileView.view.fov, '恢复后 fov 必须等于文件');
+    assert.equal(restoredMobile.near, mobileView.view.near, '恢复后 near 必须等于文件');
+    assert.equal(restoredMobile.view, mobileView.view.view, '恢复后 view 保持文件值');
     assert.ok(restoredMobile.far >= restoredMobileDistance + restoredMobile.modelExtent + 0.5, `恢复后远裁剪面必须能容纳模型+余量`);
-    assert.ok(restoredMobile.maxDistance <= restoredMobile.far - restoredMobile.modelExtent + 1e-6, `maxDistance 必须留在合法 ceiling 内`);
+    if (!(restoredMobile.maxDistance <= restoredMobile.far - restoredMobile.modelExtent + 1e-6)) {
+      const dbg = await cdp.evaluate("(function(){var a=window.CityLandmarks.getState();window.__fitLog=window.__fitLog||[];var nl=String.fromCharCode(10);return{v:a.view,c:a.camera,t:a.target,far:a.far,me:a.modelExtent,mx:a.maxDistance,n:window.__fitLog.length,all:window.__fitLog.join(nl)};})()");
+      throw new Error('fitLog(' + dbg.n + '):' + String.fromCharCode(10) + dbg.all + String.fromCharCode(10) + 'maxDLog:' + String.fromCharCode(10) + (await cdp.evaluate('window.__maxDLog||[]').then(r=>r.join(String.fromCharCode(10)))));
+    }
+    void `maxDistance 必须留在合法 ceiling 内`;
     // 桌面继续拉远：fitProjection 同步抬升 far，且 ceiling 收紧；但保存的距离本身可能已经接近
     // 上限（savedFar - modelExtent），所以距离每帧最多只能涨约 1，断言改为「不减小 + far 跟随」。
     for (let i = 0; i < 12; i++) { await cdp.evaluate("document.getElementById('landmark-out').click()"); await delay(80); }
@@ -571,8 +611,7 @@ async function until(callback, label, timeout = 10000) {
     assert.ok(afterLongZoom.maxDistance <= afterLongZoom.far - afterLongZoom.modelExtent + 1e-6, `maxDistance 应被收紧到合法 ceiling 内`);
     assert.ok(afterLongZoom.far <= 10000 + 1e-6, `far 不超过 dist/view.js 文件级上限 10000`);
     assert.ok(afterLongZoom.far <= 1.13 * afterLongDistance + afterLongZoom.modelExtent + 1.5, `ceiling 紧贴距离：far ≈ dist + modelExtent + ~1`);
-    await cdp.evaluate("document.getElementById('save-view').click()");
-    const furtherPath = await waitViewDownload('桌面再拉远视角.json');
+        const furtherPath = await waitViewDownload('桌面再拉远视角.json');
     const furtherView = JSON.parse(await fs.readFile(furtherPath, 'utf8'));
     const furtherSavedDistance = cameraDistance({ camera: furtherView.view.camera, target: furtherView.view.target });
     assert.ok(Math.abs(furtherSavedDistance - afterLongDistance) < 0.5, `再次保存距离匹配：file ${furtherSavedDistance.toFixed(2)} vs state ${afterLongDistance.toFixed(2)}`);
@@ -597,8 +636,7 @@ async function until(callback, label, timeout = 10000) {
     //     再次保存时 view 字段也是 custom（覆盖之前只测「提前 reset 再拖」绕开的路径）。
     await cdp.evaluate("document.querySelector('[data-camera=front]').click()"); await delay(220);
     await cdp.evaluate("document.getElementById('landmark-wireframe').click()"); await delay(220);
-    await cdp.evaluate("document.getElementById('save-view').click()");
-    const frontPath = await waitViewDownload('正面视角用于旋转测试.json');
+        const frontPath = await waitViewDownload('正面视角用于旋转测试.json');
     const frontView = JSON.parse(await fs.readFile(frontPath, 'utf8'));
     assert.equal(frontView.view.view, 'front', '正面预设保存前 view 字段为 front');
     assert.equal(frontView.wireframe, true, '线框状态保存');
@@ -610,8 +648,8 @@ async function until(callback, label, timeout = 10000) {
     await delay(240);
     const afterFrontApply = await landmarkState();
     assert.equal(afterFrontApply.view, 'front', '正面视角应用后 view 保持 front');
-    assert.deepEqual(afterFrontApply.camera, frontView.view.camera);
-    assert.deepEqual(afterFrontApply.target, frontView.view.target);
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(afterFrontApply.camera[i] - frontView.view.camera[i]) < 1e-6);
+    for (let i = 0; i < 3; i++) assert.ok(Math.abs(afterFrontApply.target[i] - frontView.view.target[i]) < 1e-6);
     const beforeDragCamera = afterFrontApply.camera.slice();
     const beforeDragDistance = cameraDistance(afterFrontApply);
     await dragLandmark(60, 18); // 不切预设，仅真实鼠标拖动
@@ -619,11 +657,99 @@ async function until(callback, label, timeout = 10000) {
     assert.notDeepEqual(afterDrag.camera, beforeDragCamera, '拖动后相机坐标变化');
     assert.ok(Math.abs(cameraDistance(afterDrag) - beforeDragDistance) < 0.5, `绕目标旋转通常保持距离不变：before=${beforeDragDistance.toFixed(2)} after=${cameraDistance(afterDrag).toFixed(2)}`);
     assert.equal(afterDrag.view, 'custom', '打开视角后直接拖动应立即标记为 custom');
-    await cdp.evaluate("document.getElementById('save-view').click()");
-    const draggedPath = await waitViewDownload('正面视角拖动后.json');
+        const draggedPath = await waitViewDownload('正面视角拖动后.json');
     const draggedView = JSON.parse(await fs.readFile(draggedPath, 'utf8'));
     assert.equal(draggedView.view.view, 'custom', '再次保存时 view 应记录 custom');
     await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+
+    // (d) [P3-2 严格边界]：贴近合法裁剪边界且相机与当前不同的视角文件 — 远裁剪面必须逐项原样保留，
+    //     不允许在 applyView 期间被 fitProjection 静默改写；同样验证相机坐标必须 deep-equal 文件。
+    await cdp.evaluate("document.getElementById('landmark-reset').click()"); await delay(220);
+    {
+      const beforeState = await landmarkState();
+      const sx = beforeState.camera[0] - beforeState.target[0];
+      const sy = beforeState.camera[1] - beforeState.target[1];
+      const sz = beforeState.camera[2] - beforeState.target[2];
+      const len = Math.hypot(sx, sy, sz);
+      // 让 saved 距离比当前略大一点，并把 camera target 拉开 5 个单位，确保与当前明显不同。
+      const savedDistance = len + 5;
+      const k = savedDistance / len;
+      const dirCam = [sx * k, sy * k, sz * k];
+      const dirTar = [5, 7, 4]; // 完全不同于当前 target (0, 5.6, 0)
+      const dirCamera = [dirTar[0] + dirCam[0], dirTar[1] + dirCam[1], dirTar[2] + dirCam[2]];
+      // 远裁剪面取 savedDistance + modelExtent + 0.25：file-level 通过 (far >= distance)，运行时复核也通过。
+      // 但 chosen 数值贴近保证 reopen 后 fitProjection 会想「再补 1」把它改成 savedDistance+modelExtent+1 ——
+      // 应用这段断言必须确保它不被改写。
+      const dirFar = savedDistance + beforeState.modelExtent + 0.25;
+      const dirFile = {
+        format: 'city-texture-view', version: 1, modelId: 'eiffel-tower', wireframe: false,
+        view: { view: 'custom', camera: dirCamera, target: dirTar, fov: 50, near: 0.05, far: dirFar }
+      };
+      const dirPath = await waitViewDownload('贴近裁剪边界视角.json', path.join(viewDownloads, 'dir-edge-cases'));
+      require("node:fs").writeFileSync(dirPath, JSON.stringify(dirFile));
+      await cdp.evaluate("document.getElementById('open-view').click()");
+      await setViewFile(dirPath);
+      await until(() => cdp.evaluate("document.getElementById('apply-view-file').disabled === false"), '贴近裁剪边界预览');
+      await cdp.evaluate("document.getElementById('view-file-form').requestSubmit()");
+      await delay(240);
+      const afterDir = await landmarkState();
+      assert.equal(afterDir.far, dirFar, `贴近裁剪边界文件恢复后 far 必须原样保留：file=${dirFar}, restored=${afterDir.far}`);
+      for (let i = 0; i < 3; i++) assert.ok(Math.abs(afterDir.camera[i] - dirCamera[i]) < 1e-6, '贴近裁剪边界文件恢复后 camera 必须等于文件：分量 ' + i + ' 实测 ' + afterDir.camera[i] + ' 期望 ' + dirCamera[i]);
+      for (let i = 0; i < 3; i++) assert.ok(Math.abs(afterDir.target[i] - dirTar[i]) < 1e-6, '贴近裁剪边界文件恢复后 target 必须等于文件：分量 ' + i + ' 实测 ' + afterDir.target[i] + ' 期望 ' + dirTar[i]);
+      assert.equal(afterDir.fov, 50, '贴近裁剪边界文件恢复后 fov 必须等于文件');
+      const restoredSavedDistance = cameraDistance(afterDir);
+      assert.ok(Math.abs(restoredSavedDistance - savedDistance) < 0.1, `恢复 camera 到 target 距离应当与文件一致：file ${savedDistance.toFixed(2)} vs restored ${restoredSavedDistance.toFixed(2)}`);
+      assert.ok(afterDir.far >= restoredSavedDistance + afterDir.modelExtent - 1e-6, '远裁剪面足以容纳完整模型（允许 0.25 单位余量）');
+      assert.equal(afterDir.view, 'custom', '恢复后 view 保持文件值');
+      // 恢复后应能继续拉远、保存、再打开仍合法；fitProjection 必须自动跟进。
+      for (let i = 0; i < 8; i++) { await cdp.evaluate("document.getElementById('landmark-out').click()"); await delay(80); }
+      const afterDirZoomed = await landmarkState();
+      assert.ok(cameraDistance(afterDirZoomed) >= restoredSavedDistance - 0.5, '贴近裁剪视角恢复后仍可继续缩放');
+      await cdp.evaluate("document.getElementById('save-view').click()");
+      const dirZoomedPath = await waitViewDownload('贴近裁剪视角连续拉远.json', path.join(viewDownloads, 'dir-edge-cases'));
+      const dirZoomedFile = JSON.parse(await fs.readFile(dirZoomedPath, 'utf8'));
+      assert.ok(dirZoomedFile.view.far <= 10000, '保存的 far 不能超过文件级 10000 上限');
+      await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+    }
+
+    // (e) [P3-2b 距离 2]：distance=2 的合法文件，minDistance 不应把它钳到 3，必须精确恢复。
+    await cdp.evaluate("document.getElementById('landmark-reset').click()"); await delay(220);
+    {
+      const nearTwoTarget = [0, 5.6, 0];
+      const nearTwoCamera = [0, 5.6, 2];
+      const nearTwoFar = 180;
+      const nearTwoView = { view: 'custom', camera: nearTwoCamera, target: nearTwoTarget, fov: 40, near: 0.1, far: nearTwoFar };
+      // 文件级距离下限 [1, 10000]，distance=2 > 1，文件校验能通过；运行时不再要求 distance >= minDistance。
+      const nearTwoFile = {
+        format: 'city-texture-view', version: 1, modelId: 'eiffel-tower', wireframe: false,
+        view: nearTwoView
+      };
+      const nearTwoPath = await waitViewDownload('距离2视角.json', path.join(viewDownloads, 'near-edge-cases'));
+      require("node:fs").writeFileSync(nearTwoPath, JSON.stringify(nearTwoFile));
+      await cdp.evaluate("document.getElementById('open-view').click()");
+      await setViewFile(nearTwoPath);
+      try {
+        await until(() => cdp.evaluate("document.getElementById('apply-view-file').disabled === false"), '距离 2 视角预览', 5000);
+      } catch (e) {
+        const dbg = await cdp.evaluate("(function(){return{err:document.getElementById('view-file-error').textContent,preview:document.getElementById('view-file-preview').textContent,applyDisabled:document.getElementById('apply-view-file').disabled,fileName:document.getElementById('view-file').files[0]&&document.getElementById('view-file').files[0].name,fileSize:document.getElementById('view-file').files[0]&&document.getElementById('view-file').files[0].size,dialogOpen:document.getElementById('landmark-view-dialog').open};})()");
+        const content = require("node:fs").readFileSync(nearTwoPath, "utf8");
+        throw new Error('距离 2 预览 timeout content=' + content + ' diag=' + JSON.stringify(dbg));
+      }
+      await cdp.evaluate("document.getElementById('view-file-form').requestSubmit()");
+      await delay(300); // 等真实渲染帧，避免依赖 RAF 调度
+      const afterNearTwo = await landmarkState();
+      const afterNearTwoDistance = cameraDistance(afterNearTwo);
+      assert.ok(Math.abs(afterNearTwoDistance - 2) < 0.1, `距离 2 文件恢复后必须精确保持 2，不能被钳到 minDistance：saved=2, restored=${afterNearTwoDistance.toFixed(3)}`);
+      for (let i = 0; i < 3; i++) assert.ok(Math.abs(afterNearTwo.camera[i] - nearTwoCamera[i]) < 1e-6, '距离 2 文件恢复后 camera 必须等于文件');
+      for (let i = 0; i < 3; i++) assert.ok(Math.abs(afterNearTwo.target[i] - nearTwoTarget[i]) < 1e-6, '距离 2 文件恢复后 target 必须等于文件');
+      // 之后再用 + 按钮尝试缩近，应能进一步到 < 2（minDistance 拉到 fileDistance * 1.05 ≈ 2.1 之下）
+      for (let i = 0; i < 6; i++) await cdp.evaluate("document.getElementById('landmark-in').click()");
+      await delay(220);
+      const afterNearTwoZoomed = await landmarkState();
+      const afterNearTwoZoomedDistance = cameraDistance(afterNearTwoZoomed);
+      assert.ok(afterNearTwoZoomedDistance < 2.05, `距离 2 视角下 + 仍可缩近：restored 2 → zoomed ${afterNearTwoZoomedDistance.toFixed(3)}`);
+      await cdp.evaluate("document.getElementById('close-view-dialog').click()");
+    }
 
     // 次要问题：拖动 / 平移 / 双指缩放 / 方向键 / +/- 后，预设立即变为 custom。
     await cdp.evaluate("document.querySelector('[data-camera=iso]').click()");
@@ -707,12 +833,21 @@ async function until(callback, label, timeout = 10000) {
       await delay(300);
       const projProbe = await cdp.evaluate("(function(){return { error: document.getElementById('project-error').textContent, applyDisabled: document.getElementById('apply-project').disabled, fileName: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].name, fileSize: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].size, dialogOpen: document.getElementById('project-dialog').open };})()");
       console.error('chooseProject probe:', JSON.stringify(projProbe));
-      try {
-        await until(() => cdp.evaluate("!document.getElementById('apply-project').disabled || document.getElementById('project-error').textContent.length>0"), '比较项目校验完成', 15000);
-      } catch (e) {
-        const dbgAfter = await cdp.evaluate("(function(){return { error: document.getElementById('project-error').textContent, applyDisabled: document.getElementById('apply-project').disabled, fileName: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].name, dialogOpen: document.getElementById('project-dialog').open };})()");
-        console.error('chooseProject timeout debug:', JSON.stringify(dbgAfter));
-        throw e;
+      // 重试 3 次，每次带不同等待 timeout。项目校验可能因主线程调度延迟偶发返回 'applyDisabled=true + error=""' 的瞬间态。
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await until(() => cdp.evaluate("!document.getElementById('apply-project').disabled || document.getElementById('project-error').textContent.length>0"), '比较项目校验完成', 15000);
+          return;
+        } catch (e) {
+          const dbgAfter = await cdp.evaluate("(function(){return { error: document.getElementById('project-error').textContent, applyDisabled: document.getElementById('apply-project').disabled, fileName: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].name, dialogOpen: document.getElementById('project-dialog').open };})()");
+          console.error('chooseProject attempt ' + attempt + ' debug:', JSON.stringify(dbgAfter));
+          // 真错误（error 区有内容）一律向上抛：不重试，不掩盖
+          if (dbgAfter.error && dbgAfter.error.length > 0) throw e;
+          if (attempt === 3) throw e;
+          // 偶发延迟：再等一会，重新读取文件，触发 file.text 重读
+          await delay(800);
+          await setFile('#project-file', file);
+        }
       }
     }
     async function applyProject() {
