@@ -545,6 +545,11 @@ async function until(callback, label, timeout = 10000) {
     assert.equal(await cdp.evaluate("document.getElementById('view-file-error').textContent"), '', '最近视角不应在预览阶段被拒绝');
     const nearPreview = await cdp.evaluate("document.getElementById('view-file-preview').textContent");
     assert.ok(/自定义视角|custom/.test(nearPreview), `预览应描述保存的视角：${nearPreview}`);
+    await cdp.evaluate("document.getElementById('close-view-dialog').click();document.getElementById('open-view').click()");
+    await setViewFile(nearViewPath);
+    await until(() => cdp.evaluate("!document.getElementById('apply-view-file').disabled"), '取消后立即重新选择三维视角');
+    await cdp.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    assert.equal(await cdp.evaluate("document.getElementById('apply-view-file').disabled"), false, '延后到达的 close 事件不能清空重新打开的三维视角');
     await cdp.evaluate("document.getElementById('view-file-form').requestSubmit()");
     await delay(240);
     const restoredNear = await landmarkState();
@@ -761,6 +766,18 @@ async function until(callback, label, timeout = 10000) {
       const afterNearTwoZoomed = await landmarkState();
       const afterNearTwoZoomedDistance = cameraDistance(afterNearTwoZoomed);
       assert.ok(afterNearTwoZoomedDistance < 2.05, `距离 2 视角下 + 仍可缩近：restored 2 → zoomed ${afterNearTwoZoomedDistance.toFixed(3)}`);
+      // 返回展台会调用 size()；重复切换不能把已经接受的近景悄悄推回默认下限 3。
+      for (let turn = 0; turn < 2; turn++) {
+        await cdp.evaluate("document.querySelector('[data-observation=map]').click()");
+        await cdp.evaluate("document.querySelector('[data-observation=landmark]').click()");
+        await cdp.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+        const afterReturn = await landmarkState();
+        for (let i = 0; i < 3; i++) {
+          assert.ok(Math.abs(afterReturn.camera[i] - afterNearTwoZoomed.camera[i]) < 1e-6, '切换城区比较后返回展台保留近景相机');
+          assert.ok(Math.abs(afterReturn.target[i] - afterNearTwoZoomed.target[i]) < 1e-6, '切换城区比较后返回展台保留观察目标');
+        }
+        for (const key of ['fov', 'near', 'far', 'view', 'wireframe']) assert.equal(afterReturn[key], afterNearTwoZoomed[key], `返回展台保留 ${key}`);
+      }
       await cdp.evaluate("document.getElementById('close-view-dialog').click()");
     }
 
@@ -841,26 +858,12 @@ async function until(callback, label, timeout = 10000) {
     async function chooseProject(file) {
       if (!await cdp.evaluate("document.getElementById('project-dialog').open")) await cdp.evaluate("document.getElementById('open-project').click()");
       await setFile('#project-file', file);
-      // 提前 300ms 抽样，超时也保留证据：项目文件 3.7 MB，校验需调用 C.prepare/C.prepareBuildings，
-      // 默认 until(10 s) 在 3 段 chooseProject 连发时偶发不返回；这里给到 15 s 并在错误时打印。
-      await delay(300);
-      const projProbe = await cdp.evaluate("(function(){return { error: document.getElementById('project-error').textContent, applyDisabled: document.getElementById('apply-project').disabled, fileName: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].name, fileSize: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].size, dialogOpen: document.getElementById('project-dialog').open };})()");
-      console.error('chooseProject probe:', JSON.stringify(projProbe));
-      // 重试 3 次，每次带不同等待 timeout。项目校验可能因主线程调度延迟偶发返回 'applyDisabled=true + error=""' 的瞬间态。
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          await until(() => cdp.evaluate("!document.getElementById('apply-project').disabled || document.getElementById('project-error').textContent.length>0"), '比较项目校验完成', 15000);
-          return;
-        } catch (e) {
-          const dbgAfter = await cdp.evaluate("(function(){return { error: document.getElementById('project-error').textContent, applyDisabled: document.getElementById('apply-project').disabled, fileName: document.getElementById('project-file').files[0] && document.getElementById('project-file').files[0].name, dialogOpen: document.getElementById('project-dialog').open };})()");
-          console.error('chooseProject attempt ' + attempt + ' debug:', JSON.stringify(dbgAfter));
-          // 真错误（error 区有内容）一律向上抛：不重试，不掩盖
-          if (dbgAfter.error && dbgAfter.error.length > 0) throw e;
-          if (attempt === 3) throw e;
-          // 偶发延迟：再等一会，重新读取文件，触发 file.text 重读
-          await delay(800);
-          await setFile('#project-file', file);
-        }
+      try {
+        await until(() => cdp.evaluate("!document.getElementById('apply-project').disabled || document.getElementById('project-error').textContent.length>0"), '比较项目校验完成', 15000);
+      } catch (e) {
+        const debug = await cdp.evaluate("({error:document.getElementById('project-error').textContent,preview:document.getElementById('project-preview').textContent,applyDisabled:document.getElementById('apply-project').disabled,dialogOpen:document.getElementById('project-dialog').open})");
+        console.error('chooseProject timeout debug:', JSON.stringify(debug));
+        throw e;
       }
     }
     async function applyProject() {
@@ -877,7 +880,10 @@ async function until(callback, label, timeout = 10000) {
     await cdp.evaluate("document.getElementById('reset').click()"); const resetProjectState = await currentState();
     await chooseProject(builtinProjectPath); assert.deepEqual(await currentState(), resetProjectState);
     await cdp.evaluate("document.getElementById('close-project').click()"); assert.deepEqual(await currentState(), resetProjectState);
-    await chooseProject(builtinProjectPath); await applyProject(); assert.deepEqual(await checkMoved(), builtinProjectState);
+    await chooseProject(builtinProjectPath);
+    await cdp.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    assert.equal(await cdp.evaluate("document.getElementById('apply-project').disabled"), false, '上一轮延后到达的 close 事件不能清空重新打开的比较项目');
+    await applyProject(); assert.deepEqual(await checkMoved(), builtinProjectState);
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: sampleDownloads });
     const customView = C.stateHash({ left: 'zurich-imported', right: 'bern', side: 0.5, walking: true, layer: 'both', offset: [0.01, 0] });
     await cdp.evaluate(`document.getElementById('restore-view').click();document.getElementById('view-code').value=${JSON.stringify(customView)};document.getElementById('view-form').requestSubmit()`);

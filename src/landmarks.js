@@ -80,7 +80,8 @@ function size() {
   viewJustApplied = false;
   // 若视角文件保存的距离比当前视口的最大距离大，则必须撑大 maxDistance。
   // 否则下一次 OrbitControls.update() 会把 spherical.radius 静默截回。
-  controls.minDistance = 3;
+  // 布局变化保留已恢复近景的缩放下限；只有显式切预设/重置才恢复默认值。
+  controls.minDistance = Math.min(3, controls.minDistance);
   {
     const resizeCeiling = Math.max(controls.minDistance + 0.5, Math.min(camera.far - modelExtent, FAR_LIMIT - modelExtent));
     controls.maxDistance = Math.max(distance * 3, Math.min(resizeCeiling, rememberedMaxDistance * 1.01));
@@ -315,7 +316,7 @@ $('open-view').addEventListener('click', () => {
   viewDialog.showModal();
 });
 $('close-view-dialog').addEventListener('click', () => viewDialog.close());
-viewDialog.addEventListener('close', () => { viewGeneration++; clearViewPreview(); });
+viewDialog.addEventListener('close', () => { if (viewDialog.open) return; viewGeneration++; clearViewPreview(); });
 $('view-file').addEventListener('change', async () => {
   const generation = ++viewGeneration, file = $('view-file').files[0]; clearViewPreview(); $('view-file-error').textContent = '';
   if (!file) return;
