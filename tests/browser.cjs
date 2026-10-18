@@ -12,7 +12,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class CDP {
   constructor(url) {
-    this.socket = new WebSocket(url); this.pending = new Map(); this.events = new Map(); this.nextId = 0; this.errors = [];
+    this.socket = new WebSocket(url); this.pending = new Map(); this.events = new Map(); this.listeners = new Map(); this.nextId = 0; this.errors = [];
     this.ready = new Promise((resolve, reject) => { this.socket.addEventListener('open', resolve, { once: true }); this.socket.addEventListener('error', reject, { once: true }); });
     this.socket.addEventListener('message', (event) => {
       const data = JSON.parse(String(event.data));
@@ -26,7 +26,14 @@ class CDP {
         const waiting = this.events.get(data.method); this.events.delete(data.method);
         for (const item of waiting) { clearTimeout(item.timeout); item.resolve(data.params); }
       }
+      if (data.method && this.listeners.has(data.method)) for (const handler of this.listeners.get(data.method)) handler(data.params);
     });
+  }
+  // 持久订阅：先订阅再触发动作，事件不会因为「订阅前已经到达」而丢失，
+  // 用于替代一次性 wait() 在这类动作-事件时序不确定场景下的竞态。
+  subscribe(method, handler) {
+    const list = this.listeners.get(method) || []; list.push(handler); this.listeners.set(method, list);
+    return () => { const current = this.listeners.get(method) || []; const index = current.indexOf(handler); if (index >= 0) current.splice(index, 1); };
   }
   async call(method, params = {}) {
     await this.ready;
@@ -78,7 +85,9 @@ async function until(callback, label, timeout = 10000) {
     }, '浏览器启动', 30000);
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); cdp = new CDP(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
     await cdp.call('Page.enable'); await cdp.call('Runtime.enable'); await cdp.call('Network.enable');
-    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads });
+    // eventsEnabled: true 让浏览器持续派发 Browser.downloadWillBegin / downloadProgress，
+    // 后续视角下载识别依赖这两个事件（部分 headless 环境只派发 begin）。
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloads, eventsEnabled: true });
     await cdp.call('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1400, deviceScaleFactor: 1, mobile: false });
     async function navigate(url) {
       const navigation = await cdp.call('Page.navigate', { url }); if (navigation.errorText) throw new Error(navigation.errorText);
@@ -243,7 +252,7 @@ async function until(callback, label, timeout = 10000) {
     await cdp.evaluate("document.getElementById('landmark-spin').click();document.getElementById('landmark-wireframe').click()"); assert.equal((await landmarkState()).wireframe, true);
     await cdp.evaluate("document.getElementById('landmark-reset').click()"); assert.equal((await landmarkState()).wireframe, false); assert.equal((await landmarkState()).spinning, false);
     const landmarkDownloads = path.join(runtime, 'landmark-downloads'); await fs.mkdir(landmarkDownloads);
-    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: landmarkDownloads });
+    await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: landmarkDownloads, eventsEnabled: true });
     await cdp.evaluate("document.getElementById('landmark-download').click();document.getElementById('landmark-export').click()");
     const modelName = 'eiffel-tower-SDC-CC-BY-4.0.glb', modelCard = '城市纹理-埃菲尔铁塔3D.png';
     await until(async () => (await fs.readdir(landmarkDownloads)).includes(modelName) && (await fs.readdir(landmarkDownloads)).includes(modelCard), '三维 GLB 与署名观察卡下载');
@@ -466,36 +475,40 @@ async function until(callback, label, timeout = 10000) {
         await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dir, eventsEnabled: true });
         currentDownloadDir = dir;
       }
-      // 通过 CDP 事件精准识别每次下载：Browser.downloadWillBegin 提供 guid + 文件名，
-      // Browser.downloadProgress state='completed' 表示写入完成。不依赖内容哈希，
-      // 避免两次保存内容相同时被误判为残留文件。
-      const beginPromise = cdp.wait('Browser.downloadWillBegin');
-      await cdp.evaluate("document.getElementById('save-view').click()");
-      const begin = await beginPromise;
-      // 等待同一个 guid 的进度事件直到 state='completed'，忽略中间的 'inProgress'。
-      const finalState = await (async function awaitCompleted(guid) {
-        for (;;) {
-          const p = await cdp.wait('Browser.downloadProgress');
-          if (p.guid !== guid) continue;
-          if (p.state === 'completed') return p.state;
-          if (p.state === 'canceled') throw new Error('下载被取消');
-        }
-      })(begin.guid);
-      const suggested = begin.suggestedFilename || '城市纹理-三维视角.json';
-      const target = path.join(dir, suggested);
-      // 句柄稳定：连续 2 次 fs.stat 大小一致 + fs.open 可成功打开
-      await until(async () => {
-        try {
-          const s1 = await fs.stat(target);
-          if (s1.size === 0) return false;
-          await new Promise(r => setTimeout(r, 200));
-          const s2 = await fs.stat(target);
-          if (s1.size !== s2.size) return false;
-          await (await fs.open(target, 'r')).close();
-          return true;
-        } catch (_) { return false; }
-      }, `三维视角下载稳定：${label}`);
-      return target;
+      // 一次 save-view 点击对应对一个闭包内的事件日志；订阅在点击之前完成，
+      // 避免「事件已经到达但订阅还没注册」的竞态（Linux headless CI 曾因此超时）。
+      const journal = [];
+      const offBegin = cdp.subscribe('Browser.downloadWillBegin', (params) => journal.push({ type: 'begin', params }));
+      const offProgress = cdp.subscribe('Browser.downloadProgress', (params) => journal.push({ type: 'progress', params }));
+      try {
+        await cdp.evaluate("document.getElementById('save-view').click()");
+        // Browser.downloadWillBegin 提供本次下载的 guid 与文件名：用它定位真实产物，
+        // 不做内容哈希猜测（同一视角两次保存内容本来就相同）。
+        const begin = await until(() => {
+          const hit = journal.find((entry) => entry.type === 'begin');
+          return hit ? hit.params : false;
+        }, `三维视角下载开始：${label}`, 20000);
+        const suggested = begin.suggestedFilename || '城市纹理-三维视角.json';
+        const target = path.join(dir, suggested);
+        // 写入完成证据：独立下载目录内该文件名连续两次 fs.stat 大小一致 + 句柄可打开。
+        // Chrome 对同名文件会自动改名（" (1)" 等），因此 target 不会命中上一轮的旧文件。
+        await until(async () => {
+          try {
+            const first = await fs.stat(target);
+            if (first.size === 0) return false;
+            await delay(200);
+            const second = await fs.stat(target);
+            if (first.size !== second.size) return false;
+            await (await fs.open(target, 'r')).close();
+            return true;
+          } catch (_) { return false; }
+        }, `三维视角下载稳定：${label}`, 20000);
+        // 进度事件仅作佐证：部分 headless 环境不派发 Browser.downloadProgress，
+        // 此时不应阻塞（文件写入本身已是可验证的完成证据）。
+        const completed = journal.some((entry) => entry.type === 'progress' && entry.params.guid === begin.guid && entry.params.state === 'completed');
+        if (!completed) console.log(`提示：${label} 未收到 Browser.downloadProgress=completed，已按文件写入校验。`);
+        return target;
+      } finally { offBegin(); offProgress(); }
     }
     async function setViewFile(file) {
       const doc = await cdp.call('DOM.getDocument'), input = await cdp.call('DOM.querySelector', { nodeId: doc.root.nodeId, selector: '#view-file' });
