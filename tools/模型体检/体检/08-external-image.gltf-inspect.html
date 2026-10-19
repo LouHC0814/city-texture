@@ -1,0 +1,90 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>08-external-image · 体检报告</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;max-width:1100px;margin:24px auto;padding:0 16px;color:#1c1c1c;line-height:1.55}
+  h1{margin-bottom:4px}h2{border-bottom:2px solid #ddd;padding-bottom:4px;margin-top:30px;font-size:17px}
+  .status{display:inline-block;padding:6px 14px;border-radius:6px;font-weight:700;margin-right:10px}
+  .status.ok{background:#e3f4e0;color:#156c2d}.status.warn{background:#fff1c9;color:#7a5200}.status.fatal{background:#fde2e2;color:#a01919}
+  table{border-collapse:collapse;width:100%;margin:8px 0}
+  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:13px;vertical-align:top}
+  th{background:#f4f4f4}
+  code{background:#f4f4f4;padding:1px 5px;border-radius:3px;font-size:12px}
+  .note{color:#777;font-size:12px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{background:#eef;padding:2px 8px;border-radius:10px;font-size:12px}
+  pre{background:#f4f4f4;padding:8px;overflow-x:auto;border-radius:4px;font-size:12px}
+  .warnbox{background:#fff8e6;border-left:4px solid #e0a800;padding:8px 12px;margin:8px 0;font-size:13px}
+  tr.error td{background:#fff5f5}tr.unsupported td{background:#fffaf0}tr.warning td{background:#fffef5}
+  .na{color:#aaa}
+</style></head><body>
+<h1>08-external-image · 体检报告</h1>
+<p class="note">2026-10-19T12:12:10.485Z · 8 ms · city-texture.gltf-inspect 0.5.0</p>
+
+<div class="row">
+  <span class="status fatal">错误</span>
+  <span class="pill">status <code>error</code></span>
+  <span class="pill">errors 2</span>
+  <span class="pill">unsupported 0</span>
+  <span class="pill">warnings 0</span>
+  <span class="pill">bytes 920</span>
+  <span class="pill">sha256 <code>325100e8ac098e81…</code></span>
+</div>
+
+<div class="warnbox"><b>未通过原因：</b>结构/容器校验未通过，未读取数据</div>
+<div class="warnbox"><b>几何指标不可用（unknown）：</b>E_NOT_SELF_CONTAINED<br>
+  <span class="note">本节所有数值均未计算，报告不输出"看似可信"的数字。</span></div>
+
+<h2>1. 准入判定</h2>
+<table><tr><th>项</th><th>值</th></tr>
+<tr><td>status</td><td><code>error</code></td></tr>
+<tr><td>fatal</td><td>true</td></tr>
+<tr><td>容器</td><td>GLB 2.0（magic=glTF, version=2，且总长度字段必须等于实际字节数）</td></tr>
+<tr><td>自包含</td><td>buffer 只能取 GLB 内嵌 BIN chunk；image 只能内嵌 bufferView 或 data: URI</td></tr>
+<tr><td>几何范围</td><td>静态三角网格；POSITION 必须 float32 VEC3；indices 必须 SCALAR 5121/5123/5125</td></tr>
+<tr><td>允许扩展</td><td>无（全部拒绝）</td></tr>
+<tr><td>不支持特性</td><td>skins、animations、morphTargets、sparse accessor、data: URI buffer</td></tr>
+</table>
+
+<h2>2. 容器</h2>
+<table><tr><th>字段</th><th>值</th></tr>
+<tr><td>magic / version</td><td>glTF / 2</td></tr>
+<tr><td>JSON chunk 字节</td><td>532</td></tr>
+<tr><td>BIN chunk 字节</td><td>360</td></tr>
+<tr><td>外部引用</td><td>无</td></tr>
+</table>
+
+<h2>3. 结构</h2>
+<table><tr><th>字段</th><th>值</th></tr>
+<tr><td>buffers</td><td>1</td></tr><tr><td>bufferViews</td><td>2</td></tr><tr><td>accessors</td><td>2</td></tr><tr><td>meshes</td><td>1</td></tr><tr><td>primitives</td><td>1</td></tr><tr><td>nodes</td><td>1</td></tr><tr><td>textures</td><td>0</td></tr><tr><td>scenes</td><td>1</td></tr><tr><td>defaultSceneIndex</td><td>0</td></tr>
+</table>
+
+<h2>4. 几何</h2>
+<table><tr><th>字段</th><th>值</th></tr>
+<tr><td>positionRecords</td><td><span class="na">unknown</span></td></tr>
+<tr><td>uniqueGeometries</td><td><span class="na">unknown</span></td></tr>
+<tr><td>geometryTriangles</td><td><span class="na">unknown</span></td></tr>
+<tr><td>sceneInstancesTriangles</td><td><span class="na">unknown</span></td></tr>
+<tr><td>byMode</td><td><span class="na">unknown</span></td></tr>
+<tr><td>meshGeometryTriangles</td><td><span class="na">unknown</span></td></tr>
+<tr><td>meshInstanceCount</td><td><span class="na">unknown</span></td></tr>
+</table>
+
+<h2>5. 包围盒</h2>
+<p class="na">未通过准入，未计算任何包围盒</p>
+
+
+<h2>6. 材质</h2>
+<p class="na">—</p>
+
+<h2>7. 图片</h2>
+<p class="na">未读取（准入未通过）</p>
+
+<h2>8. 扩展</h2>
+<pre>{&quot;used&quot;:[],&quot;required&quot;:[]}</pre>
+
+
+
+<h2>问题清单（2）</h2>
+<table><tr><th>code</th><th>severity</th><th>message</th><th>target</th></tr><tr class="error"><td><code>E_NOT_SELF_CONTAINED</code></td><td>error</td><td>image 0 引用外部 URI：https://example.com/x.png</td><td><code>image/0</code></td></tr><tr class="error"><td><code>E_NOT_SELF_CONTAINED</code></td><td>error</td><td>image 1 引用外部 URI：texture.png</td><td><code>image/1</code></td></tr></table>
+
+<p class="note">同批次产物：<code>08-external-image.gltf-inspect.json</code> / <code>.issues.json</code></p>
+</body></html>

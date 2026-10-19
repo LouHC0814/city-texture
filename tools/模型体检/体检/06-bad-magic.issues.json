@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_BAD_MAGIC",
+    "severity": "error",
+    "message": "magic 错误：\"XXXX\"，应为 glTF",
+    "target": "header"
+  }
+]

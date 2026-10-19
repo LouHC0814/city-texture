@@ -1,0 +1,39 @@
+{
+  "name": "city-texture-gltf-inspect",
+  "version": "0.5.0",
+  "private": true,
+  "description": "离线 GLB 体检工具 + 离线预览页 + 性能测量（运行时零外部依赖）",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node tests/run.cjs",
+    "test:verbose": "node tests/run.cjs --verbose",
+    "test:browser": "node tests/preview-admission.cjs",
+    "fixtures": "node lib/gen-fixtures.cjs",
+    "inspect": "node bin/gltf-inspect.cjs --help",
+    "server": "node lib/preview-server.cjs 5173",
+    "measure": "node measure/run-fps.cjs --port 5173 --cdp 9333 --ms 10000 --warmup 1000 --rounds 3",
+    "vendor:sync": "node scripts/sync-vendor.cjs",
+    "vendor:verify": "node scripts/sync-vendor.cjs --verify",
+    "pack": "node scripts/pack.cjs",
+    "prepare:baseline": "node scripts/准备基线.cjs",
+    "pretest": "node scripts/准备基线.cjs",
+    "pretest:browser": "node scripts/准备基线.cjs",
+    "preserver": "node scripts/准备基线.cjs",
+    "prepack": "node scripts/准备基线.cjs",
+    "start": "node lib/preview-server.cjs 5173",
+    "prestart": "node scripts/准备基线.cjs"
+  },
+  "devDependencies": {
+    "three": "0.186.0"
+  },
+  "license": "MIT",
+  "comments": {
+    "runtimeDeps": "运行时零外部依赖：所有代码只用 node: 内置模块，不需要 npm install 即可跑体检、预览服务与性能测量。",
+    "three": "devDependencies 里的 three 只用于重新生成 预览/vendor/（three@0.186.0，MIT）。交付包不含 node_modules；vendor 哈希清单在 预览/vendor/MANIFEST.json，许可见 预览/vendor/LICENSE-third-party.txt。",
+    "dropped": "v0.2.0 曾声明 @gltf-transform/core 与 @gltf-transform/extensions，但实现是手写 GLB 解析器、从未 require 过二者，v0.3.0 已移除。",
+    "tests": "npm test 是准入/结构/CLI 的断言套件（失败退出 1）；npm run test:browser 需要本机 Chrome，用 DOM.setFileInputFiles 与 window.__preview.loadUrl 验证预览页与 CLI 结论一致。"
+  }
+}

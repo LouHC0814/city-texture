@@ -329,7 +329,7 @@
   $('report').addEventListener('click', () => {
     const reports = ['left', 'right'].map(slot => ({ ...C.report(byId[state[slot]], results[slot], state.walking), sampleId: state[slot], dataProvenance: provenance(state[slot]),
       buildings: { featureCount: buildingResults[slot].featureCount, meaning: '与窗口有正面积交集的 OSM 轮廓要素，不等于独立楼栋或住房数量。', source: buildingData[state[slot]].source, skippedSourceFeatures: buildingData[state[slot]].conversion.skipped.length } }));
-    download(new Blob([JSON.stringify({ version: 3, app: '城市纹理', appVersion: '0.7.0', displayLayer: state.layer, view: C.stateHash(state), createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含道路与建筑的独立来源。');
+    download(new Blob([JSON.stringify({ version: 3, app: '城市纹理', appVersion: '0.8.0', displayLayer: state.layer, view: C.stateHash(state), createdAt: new Date().toISOString(), samples: reports }, null, 2)], { type: 'application/json' }), '城市纹理-双城数据报告.json'); notice('数据报告已生成，包含道路与建筑的独立来源。');
   });
   $('export').addEventListener('click', () => {
     const button = $('export'); button.disabled = true;
@@ -349,7 +349,7 @@
       });
       ctx.fillStyle = '#758078'; ctx.font = '16px "Microsoft YaHei",sans-serif'; ctx.fillText('局部城区快照，不代表全市；方向多样性不是城市品质评分。局部等距圆柱近似，平面图未区分地下/室内层级。', 60, 1090, 1480);
       ctx.fillText('© OpenStreetMap contributors · ODbL 1.0 · https://www.openstreetmap.org/copyright', 60, 1124);
-      ctx.fillText('程序：城市纹理 v0.7 · https://github.com/LouHC0814/city-texture', 60, 1158);
+      ctx.fillText('程序：城市纹理 v0.8 · https://github.com/LouHC0814/city-texture', 60, 1158);
       canvas.toBlob(blob => { button.disabled = false; if (!blob) { notice('生成图片失败，请下载数据报告。'); return; } download(blob, '城市纹理-双城观察卡.png'); notice('双城观察卡已生成。'); }, 'image/png');
     } catch (error) { button.disabled = false; notice('导出失败：' + error.message); }
   });

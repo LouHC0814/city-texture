@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_POSITION_NON_FINITE",
+    "severity": "error",
+    "message": "POSITION 第 0 个顶点含 NaN/Infinity，几何与世界包围盒不可信",
+    "target": "mesh/0/prim/0"
+  }
+]

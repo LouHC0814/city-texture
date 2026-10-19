@@ -1,0 +1,14 @@
+[
+  {
+    "code": "E_UNSUPPORTED_EXTENSION",
+    "severity": "unsupported",
+    "message": "必需扩展 KHR_mesh_quantization 不在首版支持范围",
+    "target": "extensionsRequired"
+  },
+  {
+    "code": "E_UNSUPPORTED_EXTENSION",
+    "severity": "unsupported",
+    "message": "使用扩展 KHR_mesh_quantization，首版不支持",
+    "target": "extensionsUsed"
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "code": "E_WORLD_BOUNDS_NON_FINITE",
+    "severity": "error",
+    "message": "computed 包围盒轴 0 的中心或范围计算溢出，无法可靠统计或预览",
+    "target": "bounds/computed"
+  },
+  {
+    "code": "E_WORLD_BOUNDS_NON_FINITE",
+    "severity": "error",
+    "message": "conservative 包围盒轴 0 的中心或范围计算溢出，无法可靠统计或预览",
+    "target": "bounds/conservative"
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "code": "E_NOT_SELF_CONTAINED",
+    "severity": "error",
+    "message": "image 0 引用外部 URI：https://example.com/x.png",
+    "target": "image/0"
+  },
+  {
+    "code": "E_NOT_SELF_CONTAINED",
+    "severity": "error",
+    "message": "image 1 引用外部 URI：texture.png",
+    "target": "image/1"
+  }
+]

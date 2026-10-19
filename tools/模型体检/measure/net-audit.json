@@ -1,0 +1,32 @@
+{
+  "generatedAt": "2026-10-19T12:19:12.791Z",
+  "totalRequests": 18,
+  "externalRequests": 0,
+  "uniqueHosts": [
+    "127.0.0.1:5173"
+  ],
+  "externalList": [],
+  "consoleErrors": [],
+  "offline": {
+    "method": "CDP Fetch 拦截：非 127.0.0.1/localhost 的请求一律 failRequest(InternetDisconnected)",
+    "pageReloaded": true,
+    "readyAfterBlock": true,
+    "externalAttempts": 0,
+    "externalAttemptsList": [],
+    "localRequestsAllowed": 18,
+    "requestsDuringReload": 18,
+    "stillRenders": true,
+    "fpsAfterBlock": {
+      "median": 1428.57,
+      "p05": 1000,
+      "p95": 2000,
+      "p99": 2000,
+      "min": 294.12,
+      "max": 3333.33,
+      "mean": 1338.67,
+      "definition": "逐帧瞬时帧率 1000/dt_i 的分位数（p05 = 最慢的 5% 帧的上界）",
+      "quantizationCaveat": "performance.now() 精度约 0.1ms；帧时间中位 0.7ms 时瞬时帧率的相对误差可达 ±14%，因此 fps 的尾部（p95/p99）只能当噪声量级参考，主指标请用 dtMs 的分位数"
+    },
+    "screenshot": "measure/shots/offline-reload.png"
+  }
+}

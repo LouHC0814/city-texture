@@ -1,3 +1,7 @@
 * text=auto eol=lf
 *.png -text
 *.gz -text
+
+*.glb -text
+# 已核对的第三方文件须逐字节保留，避免平台换行改变哈希
+tools/模型体检/预览/vendor/** -text -whitespace linguist-vendored

@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_NODE_MULTI_PARENT",
+    "severity": "error",
+    "message": "节点 2 同时被父节点 0 与 1 引用（glTF 规定每个节点最多一个父）",
+    "target": "node/2"
+  }
+]

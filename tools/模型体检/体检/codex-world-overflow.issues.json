@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_WORLD_MATRIX_NON_FINITE",
+    "severity": "error",
+    "message": "node 1 的世界矩阵第 0 项非有限（父子变换相乘后溢出），包围盒不可信",
+    "target": "node/1"
+  }
+]

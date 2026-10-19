@@ -365,7 +365,7 @@ $('landmark-export').addEventListener('click', () => {
   ctx.drawImage(canvas, (1600 - w) / 2, 125 + (900 - h) / 2, w, h);
   ctx.font = '16px sans-serif'; ctx.fillStyle = '#67766c'; ctx.fillText('模型：SDC · ( FREE ) La tour Eiffel · CC BY 4.0 · 已统一展示缩放，不用于测量。', 60, 1062);
   ctx.fillText(data.source, 60, 1096, 1480); ctx.fillText('https://sketchfab.com/3Duae · https://creativecommons.org/licenses/by/4.0/', 60, 1130);
-  ctx.fillText('城市纹理 v0.7 · https://github.com/LouHC0814/city-texture', 60, 1164);
+  ctx.fillText('城市纹理 v0.8 · https://github.com/LouHC0814/city-texture', 60, 1164);
   output.toBlob(blob => { if (blob) save(blob, '城市纹理-埃菲尔铁塔3D.png'); }, 'image/png');
 });
 new ResizeObserver(() => { size(); }).observe($('landmark-stage'));

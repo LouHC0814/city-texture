@@ -1,0 +1,100 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>05-bbox-self-mismatch · 体检报告</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;max-width:1100px;margin:24px auto;padding:0 16px;color:#1c1c1c;line-height:1.55}
+  h1{margin-bottom:4px}h2{border-bottom:2px solid #ddd;padding-bottom:4px;margin-top:30px;font-size:17px}
+  .status{display:inline-block;padding:6px 14px;border-radius:6px;font-weight:700;margin-right:10px}
+  .status.ok{background:#e3f4e0;color:#156c2d}.status.warn{background:#fff1c9;color:#7a5200}.status.fatal{background:#fde2e2;color:#a01919}
+  table{border-collapse:collapse;width:100%;margin:8px 0}
+  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:13px;vertical-align:top}
+  th{background:#f4f4f4}
+  code{background:#f4f4f4;padding:1px 5px;border-radius:3px;font-size:12px}
+  .note{color:#777;font-size:12px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{background:#eef;padding:2px 8px;border-radius:10px;font-size:12px}
+  pre{background:#f4f4f4;padding:8px;overflow-x:auto;border-radius:4px;font-size:12px}
+  .warnbox{background:#fff8e6;border-left:4px solid #e0a800;padding:8px 12px;margin:8px 0;font-size:13px}
+  tr.error td{background:#fff5f5}tr.unsupported td{background:#fffaf0}tr.warning td{background:#fffef5}
+  .na{color:#aaa}
+</style></head><body>
+<h1>05-bbox-self-mismatch · 体检报告</h1>
+<p class="note">2026-10-19T12:12:06.020Z · 9 ms · city-texture.gltf-inspect 0.5.0</p>
+
+<div class="row">
+  <span class="status ok">通过</span>
+  <span class="pill">status <code>pass</code></span>
+  <span class="pill">errors 0</span>
+  <span class="pill">unsupported 0</span>
+  <span class="pill">warnings 3</span>
+  <span class="pill">bytes 860</span>
+  <span class="pill">sha256 <code>ddccb8df7a231f8f…</code></span>
+</div>
+
+
+
+
+<h2>1. 准入判定</h2>
+<table><tr><th>项</th><th>值</th></tr>
+<tr><td>status</td><td><code>pass</code></td></tr>
+<tr><td>fatal</td><td>false</td></tr>
+<tr><td>容器</td><td>GLB 2.0（magic=glTF, version=2，且总长度字段必须等于实际字节数）</td></tr>
+<tr><td>自包含</td><td>buffer 只能取 GLB 内嵌 BIN chunk；image 只能内嵌 bufferView 或 data: URI</td></tr>
+<tr><td>几何范围</td><td>静态三角网格；POSITION 必须 float32 VEC3；indices 必须 SCALAR 5121/5123/5125</td></tr>
+<tr><td>允许扩展</td><td>无（全部拒绝）</td></tr>
+<tr><td>不支持特性</td><td>skins、animations、morphTargets、sparse accessor、data: URI buffer</td></tr>
+</table>
+
+<h2>2. 容器</h2>
+<table><tr><th>字段</th><th>值</th></tr>
+<tr><td>magic / version</td><td>glTF / 2</td></tr>
+<tr><td>JSON chunk 字节</td><td>472</td></tr>
+<tr><td>BIN chunk 字节</td><td>360</td></tr>
+<tr><td>外部引用</td><td>无</td></tr>
+</table>
+
+<h2>3. 结构</h2>
+<table><tr><th>字段</th><th>值</th></tr>
+<tr><td>buffers</td><td>1</td></tr><tr><td>bufferViews</td><td>2</td></tr><tr><td>accessors</td><td>2</td></tr><tr><td>meshes</td><td>1</td></tr><tr><td>primitives</td><td>1</td></tr><tr><td>nodes</td><td>1</td></tr><tr><td>textures</td><td>0</td></tr><tr><td>scenes</td><td>1</td></tr><tr><td>defaultSceneIndex</td><td>0</td></tr><tr><td>nodesInDefaultScene</td><td>1</td></tr>
+</table>
+
+<h2>4. 几何</h2>
+<table><tr><th>字段</th><th>值</th></tr>
+<tr><td>positionRecords</td><td>24</td></tr>
+<tr><td>uniqueGeometries</td><td>1</td></tr>
+<tr><td>geometryTriangles</td><td><b>12</b></td></tr>
+<tr><td>sceneInstancesTriangles</td><td><b>12</b></td></tr>
+<tr><td>byMode</td><td><pre>{&quot;TRIANGLES&quot;:12}</pre></td></tr>
+<tr><td>meshGeometryTriangles</td><td><pre>[12]</pre></td></tr>
+<tr><td>meshInstanceCount</td><td><pre>[1]</pre></td></tr>
+</table>
+
+<h2>5. 包围盒</h2>
+
+<table><tr><th>类型</th><th>min</th><th>max</th><th>size</th></tr>
+<tr><td><b>世界范围（逐顶点实算）</b></td><td>[0, 0, 0]</td><td>[1, 1, 1]</td><td>[1, 1, 1]</td></tr>
+<tr><td>保守 AABB（8 角点变换）</td><td>[0, 0, 0]</td><td>[1, 1, 1]</td><td>[1, 1, 1]</td></tr>
+</table>
+<p class="note">computed 由共享准入在数据段逐顶点变换得出（世界矩阵按父子链合成，任一中间/最终结果非有限即判 error）；conservative 为本地 AABB 8 角点变换后的保守框，仅用于快速剔除</p>
+
+<p>本地空间：自报 min/max</p>
+<table><tr><th>mesh</th><th>自报 min</th><th>自报 max</th></tr>
+<tr><td>mesh/0</td><td>[0, 0, 0]</td><td>[1000, 1000, 1000]</td></tr>
+</table>
+
+<h2>6. 材质</h2>
+<pre>{&quot;count&quot;:0,&quot;byType&quot;:{}}</pre>
+
+<h2>7. 图片</h2>
+<table><tr><th>index</th><th>mime</th><th>width</th><th>height</th><th>bytes</th><th>refCount</th></tr>
+<tr><td colspan="6">无</td></tr>
+</table><p class="note">byMime <code>{}</code> · uniqueImageCount=0</p>
+
+<h2>8. 扩展</h2>
+<pre>{&quot;used&quot;:[],&quot;required&quot;:[]}</pre>
+
+
+
+<h2>问题清单（3）</h2>
+<table><tr><th>code</th><th>severity</th><th>message</th><th>target</th></tr><tr class="warning"><td><code>W_BBOX_MISMATCH</code></td><td>warning</td><td>mesh 0 POSITION 自报与本地实算不一致（轴 0，相对差 9.99e+2）</td><td><code>mesh/0</code></td></tr><tr class="warning"><td><code>W_BBOX_MISMATCH</code></td><td>warning</td><td>mesh 0 POSITION 自报与本地实算不一致（轴 1，相对差 9.99e+2）</td><td><code>mesh/0</code></td></tr><tr class="warning"><td><code>W_BBOX_MISMATCH</code></td><td>warning</td><td>mesh 0 POSITION 自报与本地实算不一致（轴 2，相对差 9.99e+2）</td><td><code>mesh/0</code></td></tr></table>
+
+<p class="note">同批次产物：<code>05-bbox-self-mismatch.gltf-inspect.json</code> / <code>.issues.json</code></p>
+</body></html>

@@ -1,0 +1,110 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>eiffel · 体检报告</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;max-width:1100px;margin:24px auto;padding:0 16px;color:#1c1c1c;line-height:1.55}
+  h1{margin-bottom:4px}h2{border-bottom:2px solid #ddd;padding-bottom:4px;margin-top:30px;font-size:17px}
+  .status{display:inline-block;padding:6px 14px;border-radius:6px;font-weight:700;margin-right:10px}
+  .status.ok{background:#e3f4e0;color:#156c2d}.status.warn{background:#fff1c9;color:#7a5200}.status.fatal{background:#fde2e2;color:#a01919}
+  table{border-collapse:collapse;width:100%;margin:8px 0}
+  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:13px;vertical-align:top}
+  th{background:#f4f4f4}
+  code{background:#f4f4f4;padding:1px 5px;border-radius:3px;font-size:12px}
+  .note{color:#777;font-size:12px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{background:#eef;padding:2px 8px;border-radius:10px;font-size:12px}
+  pre{background:#f4f4f4;padding:8px;overflow-x:auto;border-radius:4px;font-size:12px}
+  .warnbox{background:#fff8e6;border-left:4px solid #e0a800;padding:8px 12px;margin:8px 0;font-size:13px}
+  tr.error td{background:#fff5f5}tr.unsupported td{background:#fffaf0}tr.warning td{background:#fffef5}
+  .na{color:#aaa}
+</style></head><body>
+<h1>eiffel · 体检报告</h1>
+<p class="note">2026-10-19T12:11:58.267Z · 164 ms · city-texture.gltf-inspect 0.5.0</p>
+
+<div class="row">
+  <span class="status ok">通过</span>
+  <span class="pill">status <code>pass</code></span>
+  <span class="pill">errors 0</span>
+  <span class="pill">unsupported 0</span>
+  <span class="pill">warnings 0</span>
+  <span class="pill">bytes 5696248</span>
+  <span class="pill">sha256 <code>628e7a27d25f673d…</code></span>
+</div>
+
+
+
+
+<h2>1. 准入判定</h2>
+<table><tr><th>项</th><th>值</th></tr>
+<tr><td>status</td><td><code>pass</code></td></tr>
+<tr><td>fatal</td><td>false</td></tr>
+<tr><td>容器</td><td>GLB 2.0（magic=glTF, version=2，且总长度字段必须等于实际字节数）</td></tr>
+<tr><td>自包含</td><td>buffer 只能取 GLB 内嵌 BIN chunk；image 只能内嵌 bufferView 或 data: URI</td></tr>
+<tr><td>几何范围</td><td>静态三角网格；POSITION 必须 float32 VEC3；indices 必须 SCALAR 5121/5123/5125</td></tr>
+<tr><td>允许扩展</td><td>无（全部拒绝）</td></tr>
+<tr><td>不支持特性</td><td>skins、animations、morphTargets、sparse accessor、data: URI buffer</td></tr>
+</table>
+
+<h2>2. 容器</h2>
+<table><tr><th>字段</th><th>值</th></tr>
+<tr><td>magic / version</td><td>glTF / 2</td></tr>
+<tr><td>JSON chunk 字节</td><td>2988</td></tr>
+<tr><td>BIN chunk 字节</td><td>5693232</td></tr>
+<tr><td>外部引用</td><td>无</td></tr>
+</table>
+
+<h2>3. 结构</h2>
+<table><tr><th>字段</th><th>值</th></tr>
+<tr><td>buffers</td><td>1</td></tr><tr><td>bufferViews</td><td>2</td></tr><tr><td>accessors</td><td>9</td></tr><tr><td>meshes</td><td>3</td></tr><tr><td>primitives</td><td>3</td></tr><tr><td>nodes</td><td>7</td></tr><tr><td>textures</td><td>0</td></tr><tr><td>scenes</td><td>1</td></tr><tr><td>defaultSceneIndex</td><td>0</td></tr><tr><td>nodesInDefaultScene</td><td>7</td></tr>
+</table>
+
+<h2>4. 几何</h2>
+<table><tr><th>字段</th><th>值</th></tr>
+<tr><td>positionRecords</td><td>163416</td></tr>
+<tr><td>uniqueGeometries</td><td>3</td></tr>
+<tr><td>geometryTriangles</td><td><b>147604</b></td></tr>
+<tr><td>sceneInstancesTriangles</td><td><b>147604</b></td></tr>
+<tr><td>byMode</td><td><pre>{&quot;TRIANGLES&quot;:147604}</pre></td></tr>
+<tr><td>meshGeometryTriangles</td><td><pre>[65164,55638,26802]</pre></td></tr>
+<tr><td>meshInstanceCount</td><td><pre>[1,1,1]</pre></td></tr>
+</table>
+
+<h2>5. 包围盒</h2>
+
+<table><tr><th>类型</th><th>min</th><th>max</th><th>size</th></tr>
+<tr><td><b>世界范围（逐顶点实算）</b></td><td>[-27.332001, 0, -27.330002]</td><td>[27.330002, 120.944008, 27.332001]</td><td>[54.662003, 120.944008, 54.662003]</td></tr>
+<tr><td>保守 AABB（8 角点变换）</td><td>[-27.332001, 0, -27.330002]</td><td>[27.330002, 120.944008, 27.332001]</td><td>[54.662003, 120.944008, 54.662003]</td></tr>
+</table>
+<p class="note">computed 由共享准入在数据段逐顶点变换得出（世界矩阵按父子链合成，任一中间/最终结果非有限即判 error）；conservative 为本地 AABB 8 角点变换后的保守框，仅用于快速剔除</p>
+
+<p>本地空间：自报 min/max</p>
+<table><tr><th>mesh</th><th>自报 min</th><th>自报 max</th></tr>
+<tr><td>mesh/0</td><td>[-26.144001, 1.188, -26.142002]</td><td>[26.142002, 108.274002, 25.904001]</td></tr><tr><td>mesh/1</td><td>[-25.904001, 0, -27.330002]</td><td>[27.330002, 120.944008, 27.332001]</td></tr><tr><td>mesh/2</td><td>[-27.332001, 0, -27.330002]</td><td>[8.320001, 119.562004, 27.332001]</td></tr>
+</table>
+
+<h2>6. 材质</h2>
+<pre>{&quot;count&quot;:1,&quot;byType&quot;:{&quot;PBR&quot;:1}}</pre>
+
+<h2>7. 图片</h2>
+<table><tr><th>index</th><th>mime</th><th>width</th><th>height</th><th>bytes</th><th>refCount</th></tr>
+<tr><td colspan="6">无</td></tr>
+</table><p class="note">byMime <code>{}</code> · uniqueImageCount=0</p>
+
+<h2>8. 扩展</h2>
+<pre>{&quot;used&quot;:[],&quot;required&quot;:[]}</pre>
+
+<h2>9. 来源 / 许可</h2><pre>{
+  &quot;title&quot;: &quot;( FREE ) La tour Eiffel&quot;,
+  &quot;author&quot;: &quot;SDC&quot;,
+  &quot;authorUrl&quot;: &quot;https://sketchfab.com/3Duae&quot;,
+  &quot;license&quot;: &quot;CC-BY-4.0&quot;,
+  &quot;licenseUrl&quot;: &quot;https://creativecommons.org/licenses/by/4.0/&quot;,
+  &quot;sourceUrl&quot;: &quot;https://sketchfab.com/3d-models/free-la-tour-eiffel-8553f94d06e24cb4b0fde1080f281674&quot;,
+  &quot;note&quot;: &quot;本项目基线。来自 v0.7.0 正式发行 dist/data/landmark-eiffel.js 中以 gzip+base64 内嵌的 GLB，由 src/landmarks.js 通过 DecompressionStream 解压后用 GLTFLoader.parseAsync 加载。用于验证体检工具首版的真实数据。展示已统一居中和缩放，模型单位不作为真实米数。&quot;,
+  &quot;credit&quot;: &quot;This work is based on \&quot;( FREE ) La tour Eiffel\&quot; (https://sketchfab.com/3d-models/free-la-tour-eiffel-8553f94d06e24cb4b0fde1080f281674) by SDC (https://sketchfab.com/3Duae) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)&quot;
+}</pre>
+       <p class="note">来源字段只做原样展示，工具不验证真实性。</p>
+
+<h2>问题清单（0）</h2>
+<p>无问题。</p>
+
+<p class="note">同批次产物：<code>eiffel.gltf-inspect.json</code> / <code>.issues.json</code></p>
+</body></html>

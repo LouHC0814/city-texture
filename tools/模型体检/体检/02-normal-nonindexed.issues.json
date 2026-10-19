@@ -1,0 +1,8 @@
+[
+  {
+    "code": "W_BBOX_MISMATCH",
+    "severity": "warning",
+    "message": "mesh 0 POSITION 自报与本地实算不一致（轴 0，相对差 5.00e-1）",
+    "target": "mesh/0"
+  }
+]
