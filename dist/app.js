@@ -262,7 +262,8 @@
     finishDrag(); projectGeneration++; clearProjectPreview(); $('project-error').textContent = ''; $('project-file').value = ''; projectDialog.showModal();
   });
   $('close-project').addEventListener('click', () => projectDialog.close());
-  projectDialog.addEventListener('close', () => { projectGeneration++; clearProjectPreview(); });
+  // 原生 close 事件可能晚于下一次 showModal；不能清掉新一轮文件预览。
+  projectDialog.addEventListener('close', () => { if (projectDialog.open) return; projectGeneration++; clearProjectPreview(); });
   $('project-file').addEventListener('change', async () => {
     const generation = ++projectGeneration, file = $('project-file').files[0]; clearProjectPreview(); $('project-error').textContent = '';
     if (!file) return;
