@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_WORLD_POSITION_NON_FINITE",
+    "severity": "error",
+    "message": "node 0 的第 1 个顶点经世界变换后非有限（变换放大后溢出），精确包围盒不可信",
+    "target": "node/0"
+  }
+]

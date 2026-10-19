@@ -194,7 +194,7 @@ async function until(callback, label, timeout = 10000) {
     const reportName = await until(async () => (await fs.readdir(downloads)).find(n => n.endsWith('.json')), '数据报告');
     const report = JSON.parse(await fs.readFile(path.join(downloads, reportName), 'utf8'));
     assert.equal(report.samples[0].city, '苏黎世'); assert.equal(report.samples[0].sideKm, 0.75); assert.equal(report.samples[1].source.license, 'ODbL-1.0');
-    assert.equal(report.appVersion, '0.7.0'); assert.equal(report.displayLayer, 'both'); assert.ok(report.samples[0].center[0] > require('../dist/data/zurich.js').lon);
+    assert.equal(report.appVersion, require('../package.json').version); assert.equal(report.displayLayer, 'both'); assert.ok(report.samples[0].center[0] > require('../dist/data/zurich.js').lon);
     assert.equal(report.samples[0].buildings.featureCount, await buildingCount('left')); assert.equal(report.samples[1].buildings.source.license, 'ODbL-1.0');
     assert.notEqual(report.samples[0].source.fetchedAt, report.samples[0].buildings.source.fetchedAt);
     assert.deepEqual(report.samples[0].offsetKm, (await currentState()).offset); assert.deepEqual(report.samples[0].offsetKm, report.samples[1].offsetKm);
@@ -467,14 +467,16 @@ async function until(callback, label, timeout = 10000) {
     // 文件来源是真实 save-view 触发的下载与 open-view 的真实文件选择，不能用 Node 构造 JSON 偷懒。
     // 当前 viewDownloads 路径：每次 downloadPath 切换要重新调用 setDownloadBehavior。
     let currentDownloadDir = viewDownloads;
+    let viewDownloadSequence = 0;
     async function waitViewDownload(label, dir) {
       if (dir === undefined) dir = currentDownloadDir;
-      // 路径切到新 dir：先确保目录存在，再让下次 save-view 写到那里。
-      if (dir !== currentDownloadDir) {
-        await fs.mkdir(dir, { recursive: true });
-        await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dir, eventsEnabled: true });
-        currentDownloadDir = dir;
-      }
+      // suggestedFilename 是建议名，不保证等于重名处理后的实际文件名。
+      // 每次使用空目录，避免旧同名文件已经稳定、而本次仍在写 .crdownload 时误读旧视角。
+      currentDownloadDir = dir;
+      const actionDir = path.join(dir, 'download-' + String(++viewDownloadSequence).padStart(3, '0'));
+      await fs.mkdir(actionDir, { recursive: true });
+      assert.deepEqual(await fs.readdir(actionDir), [], '本次视角下载目录必须为空');
+      await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: actionDir, eventsEnabled: true });
       // 一次 save-view 点击对应对一个闭包内的事件日志；订阅在点击之前完成，
       // 避免「事件已经到达但订阅还没注册」的竞态（Linux headless CI 曾因此超时）。
       const journal = [];
@@ -489,9 +491,9 @@ async function until(callback, label, timeout = 10000) {
           return hit ? hit.params : false;
         }, `三维视角下载开始：${label}`, 20000);
         const suggested = begin.suggestedFilename || '城市纹理-三维视角.json';
-        const target = path.join(dir, suggested);
+        const target = path.join(actionDir, suggested);
         // 写入完成证据：独立下载目录内该文件名连续两次 fs.stat 大小一致 + 句柄可打开。
-        // Chrome 对同名文件会自动改名（" (1)" 等），因此 target 不会命中上一轮的旧文件。
+        // 每次目录为空，target 只可能来自本次动作，不能命中上一轮文件。
         await until(async () => {
           try {
             const first = await fs.stat(target);
@@ -530,6 +532,8 @@ async function until(callback, label, timeout = 10000) {
     assert.ok(nearState.maxDistance <= nearState.far - nearState.modelExtent + 1e-6, `maxDistance 不超出合法 ceiling`);
         const nearViewPath = await waitViewDownload('桌面最近视角.json');
     const nearView = JSON.parse(await fs.readFile(nearViewPath, 'utf8'));
+    assert.notEqual(nearViewPath, viewPath, '连续同名保存必须读取本次独立文件');
+    assert.equal(JSON.parse(await fs.readFile(viewPath, 'utf8')).view.view, 'front', '先前正面视角文件保持原样');
     assert.equal(nearView.modelId, 'eiffel-tower');
     // + / - 按钮的 click handler 主动把 view 标为 custom，连续缩近后 view 字段为 custom 是预期行为。
     assert.equal(nearView.view.view, 'custom');

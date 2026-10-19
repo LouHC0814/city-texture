@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_TEXINFO_OUT_OF_RANGE",
+    "severity": "error",
+    "message": "material 0 baseColorTexture.index=123 越界：textures 只有 0 项",
+    "target": "material/0/baseColorTexture"
+  }
+]

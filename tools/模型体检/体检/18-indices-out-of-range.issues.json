@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_INDICES_OUT_OF_RANGE",
+    "severity": "error",
+    "message": "索引 99 >= POSITION.count 24（第 0 个索引）",
+    "target": "mesh/0/prim/0"
+  }
+]

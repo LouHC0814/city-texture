@@ -1,0 +1,10 @@
+{
+  "title": "( FREE ) La tour Eiffel",
+  "author": "SDC",
+  "authorUrl": "https://sketchfab.com/3Duae",
+  "license": "CC-BY-4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+  "sourceUrl": "https://sketchfab.com/3d-models/free-la-tour-eiffel-8553f94d06e24cb4b0fde1080f281674",
+  "note": "本项目基线。来自 v0.7.0 正式发行 dist/data/landmark-eiffel.js 中以 gzip+base64 内嵌的 GLB，由 src/landmarks.js 通过 DecompressionStream 解压后用 GLTFLoader.parseAsync 加载。用于验证体检工具首版的真实数据。展示已统一居中和缩放，模型单位不作为真实米数。",
+  "credit": "This work is based on \"( FREE ) La tour Eiffel\" (https://sketchfab.com/3d-models/free-la-tour-eiffel-8553f94d06e24cb4b0fde1080f281674) by SDC (https://sketchfab.com/3Duae) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)"
+}

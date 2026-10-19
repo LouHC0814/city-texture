@@ -1,0 +1,818 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>城市纹理 · 离线三维模型预览</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: light; }
+  html, body { margin: 0; padding: 0; font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f4f4f1; color: #1a1a1a; }
+  header { padding: 10px 16px; background: #fff; border-bottom: 1px solid #ddd; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .info { font-size: 12px; color: #555; }
+  .stage-wrap { position: relative; display: flex; height: calc(100vh - 126px); }
+  #stage { flex: 1; min-width: 0; background: #ecefe7; position: relative; }
+  #stage canvas { display: block; width: 100%; height: 100%; }
+  .panel { width: 340px; max-width: 40%; padding: 12px; background: #fff; border-left: 1px solid #ddd; overflow-y: auto; font-size: 13px; }
+  .panel h2 { font-size: 13px; margin: 12px 0 6px 0; color: #111; text-transform: none; border-bottom: 1px solid #eee; padding-bottom: 3px; }
+  .row { margin: 4px 0; }
+  .kv { display: flex; justify-content: space-between; gap: 8px; }
+  .kv span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
+  code { font-size: 11px; }
+  button { padding: 6px 10px; margin: 2px 4px 2px 0; background: #1f2937; color: #fff; border: 0; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  button[aria-pressed="true"] { background: #16a34a; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  input[type=file] { font-size: 12px; max-width: 180px; }
+  pre.measure { background: #0b1020; color: #c7e3ff; padding: 8px; border-radius: 4px; font-size: 11px; max-height: 200px; overflow: auto; margin: 0; }
+  .status { font-size: 12px; color: #555; padding: 6px 12px; background: #f3f4f6; border-top: 1px solid #ddd; }
+  .status.err { color: #b91c1c; background: #fef2f2; }
+  .status.warn { color: #92400e; background: #fffbeb; }
+  .banner { display: none; padding: 10px 14px; font-size: 13px; font-weight: 600; }
+  .banner.bad { display: block; background: #fee2e2; color: #991b1b; border-bottom: 1px solid #fca5a5; }
+  .banner.warn { display: block; background: #fef3c7; color: #92400e; border-bottom: 1px solid #fcd34d; }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+  .tag.ok { background: #dcfce7; color: #166534; }
+  .tag.bad { background: #fee2e2; color: #991b1b; }
+  .tag.warn { background: #fef3c7; color: #92400e; }
+  .muted { color: #777; font-size: 11px; }
+  /* 窄屏（手机模拟）隐藏侧栏：否则 40% 宽度会被面板吃掉，canvas 只剩半个视口 */
+  @media (max-width: 640px) {
+    .panel { display: none; }
+    .stage-wrap { height: calc(100vh - 96px); }
+  }
+</style>
+</head>
+<body>
+<div class="banner" id="banner"></div>
+<header>
+  <h1>城市纹理 · 离线三维模型预览</h1>
+  <span class="info" id="hdr">本地文件 · 不联网 · 不上传</span>
+  <input type="file" id="file" accept=".glb">
+  <button id="auto">自动旋转</button>
+  <button id="wire">线框</button>
+  <button id="front">正面</button>
+  <button id="top">俯视</button>
+  <button id="iso">立体</button>
+  <button id="reset">重置视角</button>
+  <button id="measure">开始 10 秒采样</button>
+  <button id="snap">截图</button>
+</header>
+<div class="stage-wrap">
+  <div id="stage"><canvas id="cv"></canvas></div>
+  <aside class="panel">
+    <h2>模型身份</h2>
+    <div id="ident"><i class="muted">未选择</i></div>
+    <h2>模型 / 场景 分别计数</h2>
+    <div id="counts">—</div>
+    <h2>渲染统计（含辅助物体）</h2>
+    <div id="renderer">—</div>
+    <h2>画布与像素比（实测）</h2>
+    <div id="canvasinfo">—</div>
+    <h2>相机</h2>
+    <div id="cam">—</div>
+    <h2>准入判定（与 CLI 同一份规则）</h2>
+    <div id="admission"><i class="muted">—</i></div>
+    <h2>依赖自检</h2>
+    <div id="deps"><i class="muted">检查中…</i></div>
+    <h2>采样结果（最近一次）</h2>
+    <pre class="measure" id="ms">(未开始)</pre>
+  </aside>
+</div>
+<div class="status" id="status">启动中…</div>
+
+<!-- ① 非模块前置：显性化错误，避免白屏无提示 -->
+<script>
+(function () {
+  window.__bootOk = false;
+  window.__bootErrors = [];
+  window.__deps = null;
+
+  function banner(text, kind) {
+    var b = document.getElementById('banner');
+    if (!b) return;
+    b.className = 'banner ' + (kind || 'bad');
+    b.textContent = text;
+    b.style.display = text ? 'block' : 'none';
+  }
+  window.__banner = banner;
+
+  function fail(msg) {
+    if (window.__bootErrors.indexOf(msg) === -1) window.__bootErrors.push(msg);
+    banner('加载失败：' + msg, 'bad');
+  }
+  window.__bootFail = fail;
+
+  window.addEventListener('error', function (e) {
+    var m = (e && e.message) ? e.message : 'unknown error';
+    if (e && e.target && e.target.tagName) m = '资源加载失败：' + (e.target.src || e.target.href || e.target.tagName);
+    fail(m);
+  }, true);
+
+  window.addEventListener('unhandledrejection', function (e) {
+    fail('未处理的 Promise 拒绝：' + String((e && e.reason && e.reason.message) || (e && e.reason) || 'unknown'));
+  });
+
+  var NEED = [
+    '/lib/gltf-admission.js',
+    'vendor/three.module.js',
+    'vendor/three.core.js',
+    'vendor/jsm/controls/OrbitControls.js',
+    'vendor/jsm/loaders/GLTFLoader.js',
+    'vendor/jsm/utils/BufferGeometryUtils.js',
+    'vendor/jsm/utils/SkeletonUtils.js',
+    'vendor/jsm/environments/RoomEnvironment.js'
+  ];
+
+  window.__checkDeps = function () {
+    return Promise.all(NEED.map(function (u) {
+      return fetch(u, { method: 'GET', cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) return { url: u, ok: false, status: r.status };
+          // 读一小段确认不是空文件
+          return r.text().then(function (t) { return { url: u, ok: t.length > 0, status: r.status, bytes: t.length }; });
+        })
+        .catch(function (err) { return { url: u, ok: false, status: String(err && err.message || err) }; });
+    })).then(function (list) {
+      window.__deps = list;
+      var box = document.getElementById('deps');
+      var bad = list.filter(function (x) { return !x.ok; });
+      if (box) {
+        box.innerHTML = list.map(function (x) {
+          return '<div class="kv"><span><code>' + x.url.replace(/^vendor\//, '') + '</code></span>' +
+                 '<span class="tag ' + (x.ok ? 'ok' : 'bad') + '">' + (x.ok ? 'OK' : '缺失') + '</span></div>';
+        }).join('');
+      }
+      if (bad.length) banner('依赖缺失 ' + bad.length + ' 个：' + bad.map(function (b) { return b.url; }).join('、'), 'bad');
+      return list;
+    });
+  };
+
+  window.__checkDeps();
+
+  setTimeout(function () {
+    if (!window.__bootOk) fail('模块 10 秒内未完成初始化（vendor 缺失或 JS 语法错误？）');
+  }, 10000);
+})();
+</script>
+
+<!-- ② 准入规则：与 CLI 完全同一份文件 -->
+<script src="/lib/gltf-admission.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const ADM = window.GLTFAdmission;
+const stage = document.getElementById('stage');
+const statusEl = document.getElementById('status');
+const identEl = document.getElementById('ident');
+const countsEl = document.getElementById('counts');
+const renderEl = document.getElementById('renderer');
+const canvasEl = document.getElementById('canvasinfo');
+const camEl = document.getElementById('cam');
+const admissionEl = document.getElementById('admission');
+const msEl = document.getElementById('ms');
+
+let renderer = null, scene = null, camera = null, controls = null;
+let model = null, ground = null, env = null;
+let ready = false, failed = false, spinning = false, wireframe = false;
+let pendingFrame = false, lastStatsAt = 0;
+let currentModel = null;
+let lastLoad = null;   // 最近一次加载尝试的结果（ok=false 时可能仍保留着上一个模型）
+let lostContext = false;
+
+// 测量
+let measuring = false;
+let measureSamples = [];
+let measureT0 = 0;
+let measureDuration = 0;
+let measureWarmup = 0;
+let measureResolve = null;
+let measureBase = null;
+const OMEGA = 0.00055;   // rad/ms —— 固定角速度，与帧率无关
+let renderRepeat = 1;    // 敏感性验证：每帧重复渲染次数（1 = 正常）
+
+function setStatus(s, kind) {
+  statusEl.textContent = s;
+  statusEl.className = 'status' + (kind ? ' ' + kind : '');
+}
+function fmt(v, d) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(d == null ? 2 : d) : '—'; }
+
+/* ───────── 渲染主循环 ───────── */
+function requestRender() {
+  if (pendingFrame) return;
+  pendingFrame = true;
+  requestAnimationFrame(tick);
+}
+
+function tick(now) {
+  pendingFrame = false;
+  if (!renderer || !ready) return;
+
+  if (measuring) {
+    // 时间驱动的固定相机路线：同一时刻任何帧率下角度一致
+    if (measureT0 === 0) measureT0 = now;
+    const az = measureBase.theta + (now - measureT0) * OMEGA;
+    camera.position.setFromSphericalCoords(measureBase.radius, measureBase.phi, az).add(controls.target);
+    camera.lookAt(controls.target);
+  } else {
+    controls.update();
+  }
+
+  renderer.render(scene, camera);
+  for (let k = 1; k < renderRepeat; k++) renderer.render(scene, camera);
+
+  if (measuring) {
+    measureSamples.push(now);
+    if (measureT0 !== 0 && now - measureT0 >= measureDuration) { finishMeasure(now); return; }
+  } else if (now - lastStatsAt > 250) {
+    lastStatsAt = now;
+    updateStats();
+  }
+
+  if (spinning || measuring) requestRender();
+}
+
+function updateStats() {
+  if (!renderer) return;
+  const info = renderer.info;
+  renderEl.innerHTML =
+    row('draw calls', info.render.calls) +
+    row('triangles（含地面）', info.render.triangles.toLocaleString()) +
+    row('geometries', info.memory.geometries) +
+    row('textures', info.memory.textures);
+
+  const gl = renderer.getContext();
+  const canvas = renderer.domElement;
+  canvasEl.innerHTML =
+    row('CSS 尺寸', stage.clientWidth + '×' + stage.clientHeight) +
+    row('canvas 像素', canvas.width + '×' + canvas.height) +
+    row('drawingBuffer', gl.drawingBufferWidth + '×' + gl.drawingBufferHeight) +
+    row('renderer DPR', fmt(renderer.getPixelRatio(), 3)) +
+    row('devicePixelRatio', fmt(window.devicePixelRatio || 1, 3));
+
+  if (controls) {
+    const p = camera.position, t = controls.target;
+    camEl.innerHTML =
+      row('position', `<code>${fmt(p.x)}, ${fmt(p.y)}, ${fmt(p.z)}</code>`) +
+      row('target', `<code>${fmt(t.x)}, ${fmt(t.y)}, ${fmt(t.z)}</code>`) +
+      row('distance', fmt(p.distanceTo(t)));
+  }
+}
+function row(k, v) { return `<div class="kv"><span>${k}</span><span>${v}</span></div>`; }
+
+/* ───────── 初始化 ───────── */
+function initThree() {
+  if (renderer) return;
+  const canvas = document.getElementById('cv');
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.5;
+
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault(); lostContext = true;
+    setStatus('WebGL 上下文丢失（GPU 重置或显存不足），请刷新页面', 'err');
+  }, false);
+  canvas.addEventListener('webglcontextrestored', () => { lostContext = false; setStatus('WebGL 上下文已恢复', 'warn'); }, false);
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color('#ecefe7');
+
+  camera = new THREE.PerspectiveCamera(40, 1, 0.1, 5000);
+  controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.12;
+  controls.maxPolarAngle = Math.PI / 2 - 0.015;
+  controls.addEventListener('start', () => { if (spinning) setAuto(false); });
+  controls.addEventListener('change', () => { requestRender(); });
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  pmrem.dispose();
+  scene.environment = env;
+
+  scene.add(new THREE.HemisphereLight(0xdce8ff, 0xb5aa8e, 2.3));
+  const sun = new THREE.DirectionalLight(0xffedcf, 4.5);
+  sun.position.set(10, 22, 14); scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xe2edff, 2);
+  fill.position.set(-13, 10, -9); scene.add(fill);
+
+  // 地面：位置与半径在 angleFit() 里按模型真实最低点/尺寸设置
+  ground = new THREE.Mesh(
+    new THREE.CylinderGeometry(1, 1, 1, 96),
+    new THREE.MeshStandardMaterial({ color: '#e3e8db', roughness: 0.95 })
+  );
+  ground.name = '__ground';
+  scene.add(ground);
+
+  size();
+  window.addEventListener('resize', size);
+  setStatus('就绪 · 选 GLB，或用 ?file=/glb/xxx.glb 自动加载（上限 64 MiB）');
+}
+
+function size() {
+  if (!renderer) return;
+  // devicePixelRatio 会随 Emulation.setDeviceMetricsOverride 变化，
+  // 所以每次 resize 都要重新应用像素比，否则手机档会一直用桌面的 DPR=1
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  const w = Math.max(1, stage.clientWidth), h = Math.max(1, stage.clientHeight);
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  requestRender();
+}
+
+/* ───────── 资源释放 ───────── */
+function disposeMaterial(mat) {
+  if (!mat) return;
+  for (const k in mat) {
+    const v = mat[k];
+    if (v && v.isTexture) { try { v.dispose(); } catch (_) {} }
+  }
+  try { mat.dispose(); } catch (_) {}
+}
+function disposeObject3D(root) {
+  if (!root) return { geometries: 0, materials: 0 };
+  const seenMat = new Set();
+  const seenGeo = new Set();
+  let g = 0, m = 0;
+  root.traverse((o) => {
+    if (o.geometry && !seenGeo.has(o.geometry)) { seenGeo.add(o.geometry); try { o.geometry.dispose(); } catch (_) {} g++; }
+    const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+    for (const mt of mats) {
+      if (seenMat.has(mt)) continue;
+      seenMat.add(mt); disposeMaterial(mt); m++;
+    }
+  });
+  return { geometries: g, materials: m };
+}
+function unloadModel() {
+  if (!model) return null;
+  const released = disposeObject3D(model);
+  scene.remove(model);
+  model = null;
+  ready = false;
+  currentModel = null;
+  try { renderer.renderLists.dispose(); } catch (_) {}
+  return released;
+}
+
+/* ───────── 计数：模型几何 vs 场景渲染 ───────── */
+function countModelTriangles(root) {
+  const seen = new Set();
+  let tri = 0;
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry || seen.has(o.geometry)) return;
+    seen.add(o.geometry);
+    const g = o.geometry;
+    const n = g.index ? g.index.count : (g.attributes.position ? g.attributes.position.count : 0);
+    tri += Math.floor(n / 3);
+  });
+  return tri;
+}
+function countGroundTriangles() {
+  if (!ground || !ground.geometry) return 0;
+  const g = ground.geometry;
+  const n = g.index ? g.index.count : (g.attributes.position ? g.attributes.position.count : 0);
+  return Math.floor(n / 3);
+}
+
+/* ───────── 视角与地面 ───────── */
+function preset(name) {
+  if (!ready) return;
+  controls.target.set(0, 0, 0);
+  if (name === 'top') setCam(0.035, Math.PI / 4);
+  else if (name === 'front') setCam(Math.PI / 2, 0);
+  else setCam(1.05, Math.PI / 4);
+  requestRender();
+}
+function setCam(phi, theta) {
+  const r = camera.position.distanceTo(controls.target);
+  const sp = new THREE.Spherical(r, phi, theta).makeSafe();
+  camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(sp));
+  camera.lookAt(controls.target);
+  requestRender();
+}
+
+function angleFit() {
+  if (!model) return;
+  // 1) 归一化到最长边 = 14，并整体居中到原点
+  let box = new THREE.Box3().setFromObject(model);
+  const sz = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(sz.x, sz.y, sz.z) || 1;
+  const s = 14 / maxDim;
+  const c0 = box.getCenter(new THREE.Vector3());
+  model.position.sub(c0);
+  model.scale.multiplyScalar(s);
+  model.position.multiplyScalar(s);
+
+  box = new THREE.Box3().setFromObject(model);
+  const c1 = box.getCenter(new THREE.Vector3());
+  model.position.sub(c1);
+
+  // 2) 用归一化后的真实范围定相机与地面
+  box = new THREE.Box3().setFromObject(model);
+  const size3 = box.getSize(new THREE.Vector3());
+  const radius = Math.max(size3.x, size3.y, size3.z) * 0.5;
+  const dist = Math.max(radius / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), radius * 2.2);
+
+  controls.target.set(0, 0, 0);
+  camera.position.set(dist * 0.62, dist * 0.42, dist * 0.78);
+  camera.near = Math.max(0.02, dist / 4000);
+  camera.far = dist * 30;
+  camera.updateProjectionMatrix();
+  camera.lookAt(controls.target);
+
+  // 地面放在模型真实最低点下方一点点，绝不穿进模型
+  if (ground) {
+    const minY = box.min.y;
+    const h = Math.max(size3.y, 1e-3);
+    const r = Math.max(size3.x, size3.z) * 0.9;
+    const thickness = Math.max(h * 0.004, 0.004);
+    ground.position.set(0, minY - thickness * 2, 0);
+    ground.scale.set(Math.max(r, 1), thickness, Math.max(r, 1));
+    ground.visible = true;
+  }
+
+  controls.update();
+  requestRender();
+  return box;
+}
+
+function setAuto(v) {
+  spinning = v;
+  if (controls) controls.autoRotate = v;
+  const b = document.getElementById('auto');
+  b.setAttribute('aria-pressed', String(v));
+  b.textContent = v ? '暂停旋转' : '自动旋转';
+  requestRender();
+}
+function setWire(v) {
+  wireframe = v;
+  document.getElementById('wire').setAttribute('aria-pressed', String(v));
+  if (!model) return;
+  model.traverse((o) => {
+    if (!o.isMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) if (m) { m.wireframe = v; m.needsUpdate = true; }
+  });
+  requestRender();
+}
+
+/* ───────── 准入（与 CLI 同一份规则，加载前拦） ───────── */
+function showAdmission(verdict, label) {
+  const codes = verdict.issues.map(i => i.code);
+  const uniq = codes.filter((v, i) => codes.indexOf(v) === i);
+  const cls = verdict.status === 'pass' ? 'ok' : (verdict.status === 'unsupported' ? 'warn' : 'bad');
+  const labelText = verdict.status === 'pass' ? '通过' : (verdict.status === 'unsupported' ? '不支持' : '错误');
+  admissionEl.innerHTML =
+    row('最近一次', label) +
+    row('status', `<span class="tag ${cls}">${labelText} · ${verdict.status}</span>`) +
+    row('fatal', String(verdict.status !== 'pass')) +
+    row('错误码', uniq.length ? '<code>' + uniq.join('</code> <code>') + '</code>' : '—');
+  return uniq;
+}
+
+function rejectBeforeLoad(verdict, label) {
+  const uniq = showAdmission(verdict, label);
+  const first = verdict.issues.find(i => i.severity !== 'warning');
+  const detail = first ? first.message : '命中准入规则';
+  setStatus(`已拒绝（${ADM.statusText(verdict.status)}）：${detail}${ready ? ' · 保留原模型' : ''}`, 'err');
+  window.__banner(`拒绝加载 ${label}：${detail}${uniq.length > 1 ? '（共 ' + uniq.length + ' 类问题：' + uniq.join('、') + '）' : ''}${ready ? '。原模型保持不变。' : ''}`, 'bad');
+  lastLoad = { name: label, ok: false, status: verdict.status, codes: uniq, at: Date.now() };
+  if (!ready) failed = true;
+  return false;
+}
+
+/* ───────── 加载 ───────── */
+function safeLocalGlbUrl(raw) {
+  if (!raw) return null;
+  if (/^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(raw)) return null;
+  if (raw.startsWith('//')) return null;
+  if (raw.includes('..') || raw.includes('\\')) return null;
+  let p = raw;
+  if (p.startsWith('/')) p = p.slice(1);
+  if (!p.startsWith('glb/')) return null;
+  if (!/^glb\/[A-Za-z0-9._\-\/]+\.glb$/.test(p)) return null;
+  return '/' + p;
+}
+
+async function loadFromFile(file) {
+  if (!file) return false;
+  initThree();
+  if (file.size > 64 * 1024 * 1024) { setStatus('文件超过 64 MiB 上限，拒绝', 'err'); return false; }
+  const t0 = performance.now();
+  const buf = await file.arrayBuffer();
+  const tRead = performance.now();
+  return parseAndShow(buf, file.name, file.size, t0, tRead, null);
+}
+
+async function loadFromUrl(rawUrl) {
+  initThree();
+  const url = safeLocalGlbUrl(rawUrl);
+  if (!url) {
+    setStatus('?file= 被拒绝：只允许同源 /glb/ 下的 .glb 相对路径（禁止 http(s)、data:、../、绝对域名）', 'err');
+    window.__banner('?file= 参数被白名单拒绝：' + rawUrl, 'warn');
+    lastLoad = { name: rawUrl, ok: false, status: 'error', codes: ['E_URL_NOT_ALLOWED'], at: Date.now() };
+    if (!ready) failed = true;
+    return false;
+  }
+  const t0 = performance.now();
+  let resp;
+  try {
+    resp = await fetch(url, { cache: 'no-store' });
+  } catch (e) {
+    setStatus('下载失败：' + e.message, 'err'); failed = true; return false;
+  }
+  if (!resp.ok) { setStatus('下载失败：HTTP ' + resp.status, 'err'); failed = true; return false; }
+  const ab = await resp.arrayBuffer();
+  const tRead = performance.now();
+  const name = url.split('/').pop() || 'model.glb';
+  return parseAndShow(ab, name, ab.byteLength, t0, tRead, url);
+}
+
+async function parseAndShow(buf, name, size, t0, tRead, url) {
+  const bytes = new Uint8Array(buf);
+
+  // ① 准入：与 CLI 共用 lib/gltf-admission.js
+  let verdict;
+  try {
+    verdict = ADM.check(bytes);
+  } catch (e) {
+    setStatus('准入检查异常：' + e.message, 'err');
+    failed = true;
+    return false;
+  }
+  // 准入是独立阶段，必须单独计时：它要在浏览器里逐顶点算世界包围盒，
+  // 混进"解析(CPU)"会让这一项无从归因。
+  const tAdmit = performance.now();
+  if (verdict.status !== 'pass') {
+    return rejectBeforeLoad(verdict, name);
+  }
+
+  // ② 通过后才解析
+  showAdmission(verdict, name);
+  setStatus('准入通过，解析中…');
+  let gltf;
+  try {
+    gltf = await new GLTFLoader().parseAsync(buf, '');
+  } catch (e) {
+    setStatus('解析失败：' + e.message, 'err');
+    window.__banner('解析失败：' + name + ' — ' + e.message, 'bad');
+    lastLoad = { name, ok: false, status: 'error', codes: ['E_LOADER_THREW'], at: Date.now() };
+    if (!ready) failed = true;
+    return false;
+  }
+  const tParse = performance.now();
+
+  const released = model ? unloadModel() : null;
+  model = gltf.scene;
+  if (!model) { setStatus('GLTFLoader 未返回 scene', 'err'); failed = true; return false; }
+  scene.add(model);
+
+  ready = true;
+  failed = false;
+  const box = angleFit();
+
+  // 首个真正被呈现的帧
+  const tFirstRender = performance.now();
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const tFirstVisible = performance.now();
+
+  const modelTri = countModelTriangles(model);
+  const groundTri = countGroundTriangles();
+  const info = renderer.info;
+
+  currentModel = {
+    name, size, url: url || null,
+    readMs: +(tRead - t0).toFixed(2),
+    admissionMs: +(tAdmit - tRead).toFixed(2),
+    parseMs: +(tParse - tAdmit).toFixed(2),
+    firstRenderMs: +(tFirstRender - tParse).toFixed(2),
+    loadToFirstVisibleFrameMs: +(tFirstVisible - t0).toFixed(2),
+    modelTriangles: modelTri,
+    sceneTriangles: info.render.triangles,
+    groundTriangles: groundTri,
+    draws: info.render.calls,
+    bounds: {
+      min: [box.min.x, box.min.y, box.min.z].map(v => +v.toFixed(4)),
+      max: [box.max.x, box.max.y, box.max.z].map(v => +v.toFixed(4))
+    }
+  };
+
+  const assetMeta = (gltf.asset && gltf.asset.extras) || {};
+  const attr = [];
+  if (assetMeta.title) attr.push(row('模型名', esc(assetMeta.title)));
+  if (assetMeta.author) attr.push(row('作者', esc(assetMeta.author)));
+  if (assetMeta.license) attr.push(row('许可证', esc(assetMeta.license)));
+  if (assetMeta.source) attr.push(row('来源页', '<code>' + esc(assetMeta.source) + '</code>'));
+
+  identEl.innerHTML =
+    row('文件名', '<code>' + esc(name) + '</code>') +
+    row('来源', url ? '<code>' + esc(url) + '</code>' : '本地文件选择') +
+    row('大小', (size / 1024 / 1024).toFixed(2) + ' MiB') +
+    row('读取', currentModel.readMs + ' ms') +
+    row('准入(CPU)', currentModel.admissionMs + ' ms') +
+    row('解析(CPU)', currentModel.parseMs + ' ms') +
+    row('首个可见帧', '<b>' + currentModel.loadToFirstVisibleFrameMs + ' ms</b>') +
+    row('归一化后范围', `<code>${currentModel.bounds.min.join(', ')} → ${currentModel.bounds.max.join(', ')}</code>`) +
+    (attr.length ? '<div class="muted" style="margin-top:8px">署名 / 许可证（来自 asset.extras，本地展示）</div>' + attr.join('') : '');
+
+  countsEl.innerHTML =
+    row('模型几何三角面', '<b>' + modelTri.toLocaleString() + '</b>') +
+    row('地面（辅助）', groundTri.toLocaleString()) +
+    row('场景实际渲染', '<b>' + info.render.triangles.toLocaleString() + '</b>') +
+    '<div class="muted">模型数来自遍历已加载网格；场景数来自 renderer.info（含地面）。两者不应混用。</div>' +
+    (released ? `<div class="muted">上一个模型已释放：geometry ${released.geometries} / material ${released.materials}</div>` : '');
+
+  updateStats();
+  setStatus(`模型已加载 · 模型 ${modelTri.toLocaleString()} 三角面 · 场景 ${info.render.triangles.toLocaleString()}（含地面）`);
+  window.__banner('', 'none');
+  lastLoad = { name, ok: true, status: 'pass', codes: [], at: Date.now() };
+  return true;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ───────── 10 秒采样（时间驱动相机 + 原始帧间隔） ───────── */
+function startMeasure(durationMs, warmupMs) {
+  return new Promise((resolve) => {
+    if (!ready) { resolve({ error: '未加载模型' }); return; }
+    if (measuring) { resolve({ error: '已在采样中' }); return; }
+    const off = new THREE.Vector3().subVectors(camera.position, controls.target);
+    const sph = new THREE.Spherical().setFromVector3(off).makeSafe();
+    measureBase = { radius: sph.radius, phi: sph.phi, theta: sph.theta };
+    measureSamples = [];
+    measureT0 = 0;
+    measureDuration = durationMs + (warmupMs || 0);
+    measureWarmup = warmupMs || 0;
+    measuring = true;
+    measureResolve = resolve;
+    controls.enabled = false;
+    if (spinning) setAuto(false);
+    setStatus('采样中…（前 ' + (warmupMs || 0) + ' ms 为预热，不计入）');
+    requestRender();
+  });
+}
+
+function finishMeasure(lastNow) {
+  measuring = false;
+  controls.enabled = true;
+  const out = buildMeasureResult(lastNow);
+  if (measureResolve) { measureResolve(out); measureResolve = null; }
+  msEl.textContent = JSON.stringify({
+    totalMs: out.totalMs, samples: out.samples, fps: out.fps, dts: out.dts, renderer: out.renderer
+  }, null, 2);
+  setStatus('采样完成 · FPS 中位 ' + out.fps.median + ' / p95 ' + out.fps.p95);
+  requestRender();
+}
+
+function buildMeasureResult(lastNow) {
+  const t0 = measureSamples.length ? measureSamples[0] : 0;
+  const rel = measureSamples.map((t) => t - t0);
+  const kept = rel.filter((t) => t >= measureWarmup);
+  const dts = [];
+  for (let i = 1; i < kept.length; i++) dts.push(kept[i] - kept[i - 1]);
+  const sorted = dts.slice().sort((a, b) => a - b);
+  const q = (p) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] : 0;
+  const info = renderer ? renderer.info : { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } };
+  const gl = renderer.getContext();
+  const canvas = renderer.domElement;
+  const med = q(0.5), p95 = q(0.95);
+  return {
+    totalMs: Math.round(lastNow - t0),
+    samples: kept.length,
+    frames: rel.length,
+    warmupMs: measureWarmup,
+    dts: dts.map((v) => +v.toFixed(3)),
+    stats: { median: +med.toFixed(3), p95: +p95.toFixed(3), min: +(sorted[0] || 0).toFixed(3), max: +(sorted[sorted.length - 1] || 0).toFixed(3) },
+    fps: {
+      median: +(1000 / (med || 1)).toFixed(2),
+      p95: +(1000 / (p95 || 1)).toFixed(2),
+      min: +(1000 / ((sorted[sorted.length - 1]) || 1)).toFixed(2),
+      max: +(1000 / ((sorted[0]) || 1)).toFixed(2)
+    },
+    renderer: {
+      draws: info.render.calls,
+      triangles: info.render.triangles,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+      dpr: renderer.getPixelRatio(),
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      drawingBufferWidth: gl.drawingBufferWidth,
+      drawingBufferHeight: gl.drawingBufferHeight,
+      cssWidth: stage.clientWidth,
+      cssHeight: stage.clientHeight
+    },
+    cameraRoute: 'time-driven spherical（固定角速度 rad/ms，与帧率无关）',
+    renderRepeat
+  };
+}
+
+/* ───────── 事件 ───────── */
+document.getElementById('file').addEventListener('change', (e) => loadFromFile(e.target.files[0]));
+document.getElementById('auto').addEventListener('click', () => setAuto(!spinning));
+document.getElementById('wire').addEventListener('click', () => setWire(!wireframe));
+document.getElementById('front').addEventListener('click', () => preset('front'));
+document.getElementById('top').addEventListener('click', () => preset('top'));
+document.getElementById('iso').addEventListener('click', () => preset('iso'));
+document.getElementById('reset').addEventListener('click', () => { if (ready) { angleFit(); requestRender(); } });
+document.getElementById('measure').addEventListener('click', () => startMeasure(10000, 1000));
+document.getElementById('snap').addEventListener('click', () => {
+  if (!renderer) return;
+  renderer.render(scene, camera);
+  const a = document.createElement('a');
+  a.href = renderer.domElement.toDataURL('image/png');
+  a.download = 'preview-' + Date.now() + '.png';
+  a.click();
+});
+
+/* ───────── 自动化接口 ───────── */
+window.__preview = {
+  get state() {
+    let gpu = null, gpuVendor = null;
+    if (renderer) {
+      const gl = renderer.getContext();
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      gpu = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : (gl.getParameter(gl.RENDERER) || '');
+      gpuVendor = ext ? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) : (gl.getParameter(gl.VENDOR) || '');
+    }
+    const gl = renderer ? renderer.getContext() : null;
+    const canvas = renderer ? renderer.domElement : null;
+    return {
+      bootOk: window.__bootOk,
+      deps: window.__deps,
+      bootErrors: window.__bootErrors,
+      ready, failed, measuring, lostContext,
+      model: currentModel,
+      lastLoad,
+      webgl: gl ? gl.getParameter(gl.VERSION) : null,
+      gpu, gpuVendor,
+      dpr: renderer ? renderer.getPixelRatio() : null,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      canvas: canvas ? { width: canvas.width, height: canvas.height } : null,
+      drawingBuffer: gl ? { width: gl.drawingBufferWidth, height: gl.drawingBufferHeight } : null,
+      css: { width: stage.clientWidth, height: stage.clientHeight },
+      stats: renderer ? {
+        draws: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        geometries: renderer.info.memory.geometries,
+        textures: renderer.info.memory.textures
+      } : null
+    };
+  },
+  loadUrl: (u) => loadFromUrl(u),
+  loadFile: (f) => loadFromFile(f),
+  measure: (ms, warmup) => startMeasure(ms == null ? 10000 : ms, warmup == null ? 1000 : warmup),
+  setAuto, setWire, preset,
+  reset: () => { if (ready) { angleFit(); requestRender(); } },
+  dispose: () => unloadModel(),
+  // 固定量 CPU 微基准：证明 CPU 节流档位确实生效（与 GPU 无关）
+  cpuBench: (n) => {
+    const N = n || 2000000;
+    const t = performance.now();
+    let s = 0;
+    for (let i = 0; i < N; i++) s += Math.sin(i * 0.001) * Math.cos(i * 0.0007);
+    return { ms: +(performance.now() - t).toFixed(2), n: N, sink: s > 1e12 ? 1 : 0 };
+  },
+  // 敏感性验证：把每帧渲染次数放大 N 倍，用来证明"帧时间随负载上升"，即测量管线灵敏
+  setStress: (n) => { renderRepeat = Math.max(1, Math.min(64, (n | 0) || 1)); requestRender(); return renderRepeat; },
+  get renderRepeat() { return renderRepeat; },
+  admission: (bytesOrArray) => ADM.check(new Uint8Array(bytesOrArray)),
+  snapshot: () => { if (!renderer) return null; renderer.render(scene, camera); return renderer.domElement.toDataURL('image/png'); }
+};
+
+/* ───────── 启动 ───────── */
+initThree();
+window.__bootOk = true;
+requestRender();
+
+(function autoBoot() {
+  const params = new URLSearchParams(location.search);
+  const f = params.get('file');
+  if (f) {
+    loadFromUrl(f).then((okFrame) => {
+      if (okFrame) { const v = params.get('view'); if (v) preset(v); }
+    });
+  }
+})();
+</script>
+</body>
+</html>

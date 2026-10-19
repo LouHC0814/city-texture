@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_UNSUPPORTED_FEATURE",
+    "severity": "unsupported",
+    "message": "accessor 0 为稀疏（sparse）格式，首版不支持",
+    "target": "accessor/0"
+  }
+]

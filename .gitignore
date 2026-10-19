@@ -3,3 +3,11 @@ node_modules/
 __pycache__/
 *.pyc
 .DS_Store
+
+# 模型体检：仅跟踪源码、参考数据与明确归档的实验
+tools/模型体检/基线/eiffel.glb
+tools/模型体检/pack/
+tools/模型体检/.tmp*
+tools/模型体检/measure/.tmp*
+tools/模型体检/measure/.chrome*
+tools/模型体检/measure/access.log.jsonl

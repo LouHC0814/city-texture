@@ -1,0 +1,14 @@
+[
+  {
+    "code": "W_BIN_PADDING_EXCESS",
+    "severity": "warning",
+    "message": "BIN chunk 36 字节比 buffer 0 声明的 4 多 32 字节，超过 4 字节对齐允许的 0–3 字节填充",
+    "target": "chunk1"
+  },
+  {
+    "code": "E_BV_EXCEEDS_BUFFER",
+    "severity": "error",
+    "message": "bufferView 0 越过所属 buffer 0 的逻辑长度：byteOffset 0 + byteLength 36 > buffer.byteLength 4",
+    "target": "bufferView/0"
+  }
+]

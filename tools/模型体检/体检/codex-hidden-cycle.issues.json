@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_NODE_CYCLE",
+    "severity": "error",
+    "message": "节点 1 通过父节点 2 参与循环引用（全图扫描，默认场景之外也算）",
+    "target": "node/1"
+  }
+]

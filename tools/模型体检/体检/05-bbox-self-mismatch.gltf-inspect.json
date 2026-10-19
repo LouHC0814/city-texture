@@ -1,0 +1,215 @@
+{
+  "format": "city-texture-gltf-inspection",
+  "formatVersion": 5,
+  "run": {
+    "tool": "city-texture.gltf-inspect",
+    "toolVersion": "0.5.0",
+    "startedAt": "2026-10-19T12:12:06.011Z",
+    "finishedAt": "2026-10-19T12:12:06.020Z",
+    "durationMs": 9
+  },
+  "input": {
+    "name": "05-bbox-self-mismatch",
+    "bytes": 860,
+    "sha256": "ddccb8df7a231f8f7ff5e6847ad97c535f45c8e28afeae95af098c3bf9179005",
+    "detectedFormat": "glb-2.0"
+  },
+  "status": "pass",
+  "fatal": false,
+  "issues": [
+    {
+      "code": "W_BBOX_MISMATCH",
+      "severity": "warning",
+      "message": "mesh 0 POSITION 自报与本地实算不一致（轴 0，相对差 9.99e+2）",
+      "target": "mesh/0"
+    },
+    {
+      "code": "W_BBOX_MISMATCH",
+      "severity": "warning",
+      "message": "mesh 0 POSITION 自报与本地实算不一致（轴 1，相对差 9.99e+2）",
+      "target": "mesh/0"
+    },
+    {
+      "code": "W_BBOX_MISMATCH",
+      "severity": "warning",
+      "message": "mesh 0 POSITION 自报与本地实算不一致（轴 2，相对差 9.99e+2）",
+      "target": "mesh/0"
+    }
+  ],
+  "container": {
+    "magicOk": true,
+    "version": 2,
+    "jsonChunkBytes": 472,
+    "binChunkBytes": 360,
+    "binPresent": true,
+    "externalReferences": []
+  },
+  "admission": {
+    "status": "pass",
+    "support": {
+      "container": "GLB 2.0（magic=glTF, version=2，且总长度字段必须等于实际字节数）",
+      "selfContained": "buffer 只能取 GLB 内嵌 BIN chunk；image 只能内嵌 bufferView 或 data: URI",
+      "geometry": "静态三角网格；POSITION 必须 float32 VEC3；indices 必须 SCALAR 5121/5123/5125",
+      "allowedExtensions": [],
+      "rejectedExtensions": [
+        "KHR_draco_mesh_compression",
+        "KHR_mesh_quantization",
+        "EXT_meshopt_compression",
+        "KHR_materials_unlit",
+        "KHR_materials_specular",
+        "KHR_materials_ior",
+        "KHR_materials_emissive_strength",
+        "KHR_materials_volume",
+        "KHR_materials_transmission",
+        "KHR_materials_sheen",
+        "KHR_materials_clearcoat",
+        "KHR_materials_iridescence",
+        "KHR_materials_pbrSpecularGlossiness",
+        "EXT_texture_webp",
+        "EXT_texture_avif",
+        "KHR_texture_basisu",
+        "KHR_texture_transform"
+      ],
+      "rejectedFeatures": [
+        "skins",
+        "animations",
+        "morphTargets",
+        "sparse accessor",
+        "data: URI buffer"
+      ],
+      "limits": {
+        "fileBytes": 67108864,
+        "jsonChunkBytes": 8388608,
+        "nodeDepth": 32,
+        "nodeCount": 1048576,
+        "accessorCount": 1048576,
+        "bufferViewCount": 65536,
+        "meshCount": 65536,
+        "primitiveCount": 1048576,
+        "sceneCount": 65536,
+        "textureCount": 65536,
+        "imageBytes": 16777216,
+        "textureDimension": 8192,
+        "vertexCount": 16777216,
+        "indexCount": 16777216
+      }
+    },
+    "issueCountBySeverity": {
+      "error": 0,
+      "unsupported": 0,
+      "warning": 3,
+      "info": 0
+    }
+  },
+  "structure": {
+    "buffers": 1,
+    "bufferViews": 2,
+    "accessors": 2,
+    "meshes": 1,
+    "primitives": 1,
+    "nodes": 1,
+    "textures": 0,
+    "scenes": 1,
+    "defaultSceneIndex": 0,
+    "nodesInDefaultScene": 1
+  },
+  "geometry": {
+    "positionRecords": 24,
+    "uniqueGeometries": 1,
+    "geometryTriangles": 12,
+    "sceneInstancesTriangles": 12,
+    "byMode": {
+      "TRIANGLES": 12
+    },
+    "meshGeometryTriangles": [
+      12
+    ],
+    "meshInstanceCount": [
+      1
+    ],
+    "meshPositionCount": [
+      24
+    ],
+    "meshIndexCount": [
+      36
+    ],
+    "unknown": false,
+    "unknownReasons": []
+  },
+  "bounds": {
+    "unit": "模型本地坐标（未经归一化）",
+    "computed": {
+      "min": [
+        0,
+        0,
+        0
+      ],
+      "max": [
+        1,
+        1,
+        1
+      ],
+      "center": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "size": [
+        1,
+        1,
+        1
+      ]
+    },
+    "conservative": {
+      "min": [
+        0,
+        0,
+        0
+      ],
+      "max": [
+        1,
+        1,
+        1
+      ],
+      "center": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "size": [
+        1,
+        1,
+        1
+      ]
+    },
+    "selfReported": {
+      "mesh/0": {
+        "min": [
+          0,
+          0,
+          0
+        ],
+        "max": [
+          1000,
+          1000,
+          1000
+        ]
+      }
+    },
+    "note": "computed 由共享准入在数据段逐顶点变换得出（世界矩阵按父子链合成，任一中间/最终结果非有限即判 error）；conservative 为本地 AABB 8 角点变换后的保守框，仅用于快速剔除"
+  },
+  "materials": {
+    "count": 0,
+    "byType": {}
+  },
+  "images": {
+    "count": 0,
+    "uniqueImageCount": 0,
+    "byMime": {},
+    "list": []
+  },
+  "extensions": {
+    "used": [],
+    "required": []
+  }
+}

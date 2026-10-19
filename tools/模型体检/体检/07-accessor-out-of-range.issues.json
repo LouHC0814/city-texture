@@ -1,0 +1,8 @@
+[
+  {
+    "code": "E_ACC_OUT_OF_RANGE",
+    "severity": "error",
+    "message": "accessor 0 数据越界：需要 288 字节，bufferView 只有 72 字节（byteOffset 0 + (count-1)×12 + 元素 12）",
+    "target": "accessor/0"
+  }
+]

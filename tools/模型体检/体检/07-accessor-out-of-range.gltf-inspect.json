@@ -1,0 +1,132 @@
+{
+  "format": "city-texture-gltf-inspection",
+  "formatVersion": 5,
+  "run": {
+    "tool": "city-texture.gltf-inspect",
+    "toolVersion": "0.5.0",
+    "startedAt": "2026-10-19T12:12:09.056Z",
+    "finishedAt": "2026-10-19T12:12:09.063Z",
+    "durationMs": 7
+  },
+  "input": {
+    "name": "07-accessor-out-of-range",
+    "bytes": 848,
+    "sha256": "9e30648107a8163fb7998010b2236b59945efad47782f7e4c6a6859f181cb252",
+    "detectedFormat": "glb-2.0"
+  },
+  "status": "error",
+  "fatal": true,
+  "issues": [
+    {
+      "code": "E_ACC_OUT_OF_RANGE",
+      "severity": "error",
+      "message": "accessor 0 数据越界：需要 288 字节，bufferView 只有 72 字节（byteOffset 0 + (count-1)×12 + 元素 12）",
+      "target": "accessor/0"
+    }
+  ],
+  "reason": "结构/容器校验未通过，未读取数据",
+  "container": {
+    "magicOk": true,
+    "version": 2,
+    "jsonChunkBytes": 460,
+    "binChunkBytes": 360,
+    "binPresent": true,
+    "externalReferences": []
+  },
+  "structure": {
+    "buffers": 1,
+    "bufferViews": 2,
+    "accessors": 2,
+    "meshes": 1,
+    "primitives": 1,
+    "nodes": 1,
+    "textures": 0,
+    "scenes": 1,
+    "defaultSceneIndex": 0
+  },
+  "admission": {
+    "status": "error",
+    "support": {
+      "container": "GLB 2.0（magic=glTF, version=2，且总长度字段必须等于实际字节数）",
+      "selfContained": "buffer 只能取 GLB 内嵌 BIN chunk；image 只能内嵌 bufferView 或 data: URI",
+      "geometry": "静态三角网格；POSITION 必须 float32 VEC3；indices 必须 SCALAR 5121/5123/5125",
+      "allowedExtensions": [],
+      "rejectedExtensions": [
+        "KHR_draco_mesh_compression",
+        "KHR_mesh_quantization",
+        "EXT_meshopt_compression",
+        "KHR_materials_unlit",
+        "KHR_materials_specular",
+        "KHR_materials_ior",
+        "KHR_materials_emissive_strength",
+        "KHR_materials_volume",
+        "KHR_materials_transmission",
+        "KHR_materials_sheen",
+        "KHR_materials_clearcoat",
+        "KHR_materials_iridescence",
+        "KHR_materials_pbrSpecularGlossiness",
+        "EXT_texture_webp",
+        "EXT_texture_avif",
+        "KHR_texture_basisu",
+        "KHR_texture_transform"
+      ],
+      "rejectedFeatures": [
+        "skins",
+        "animations",
+        "morphTargets",
+        "sparse accessor",
+        "data: URI buffer"
+      ],
+      "limits": {
+        "fileBytes": 67108864,
+        "jsonChunkBytes": 8388608,
+        "nodeDepth": 32,
+        "nodeCount": 1048576,
+        "accessorCount": 1048576,
+        "bufferViewCount": 65536,
+        "meshCount": 65536,
+        "primitiveCount": 1048576,
+        "sceneCount": 65536,
+        "textureCount": 65536,
+        "imageBytes": 16777216,
+        "textureDimension": 8192,
+        "vertexCount": 16777216,
+        "indexCount": 16777216
+      }
+    },
+    "issueCountBySeverity": {
+      "error": 1,
+      "unsupported": 0,
+      "warning": 0,
+      "info": 0
+    }
+  },
+  "geometry": {
+    "positionRecords": null,
+    "uniqueGeometries": null,
+    "geometryTriangles": null,
+    "sceneInstancesTriangles": null,
+    "byMode": null,
+    "meshGeometryTriangles": null,
+    "meshInstanceCount": null,
+    "meshPositionCount": null,
+    "meshIndexCount": null,
+    "unknown": true,
+    "unknownReasons": [
+      "E_ACC_OUT_OF_RANGE"
+    ]
+  },
+  "bounds": {
+    "unit": "模型本地坐标（未经归一化）",
+    "computed": null,
+    "conservative": null,
+    "selfReported": null,
+    "note": "未通过准入，未计算任何包围盒"
+  },
+  "materials": null,
+  "images": null,
+  "extensions": {
+    "used": [],
+    "required": []
+  }
+}
