@@ -291,7 +291,8 @@ function statsOf(dts) {
 
   const waitReady = async (label) => {
     await waitFor(async () => {
-      const st = await evalJS('window.__preview ? window.__preview.state.ready : false');
+      // 渲染循环先启动，模型统计与首帧计时稍后才回填，采集前必须等二者都完成。
+      const st = await evalJS('Boolean(window.__preview && window.__preview.state.ready && window.__preview.state.model)');
       return st === true;
     }, 60000, 300);
     log('  ' + label + '：模型就绪');

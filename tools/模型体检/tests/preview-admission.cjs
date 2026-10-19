@@ -140,7 +140,9 @@ function freePort() {
   console.log('2) 打开基线模型');
   await cdp.send('Page.navigate', { url: base + '/index.html?file=' + encodeURIComponent('/glb/eiffel.glb') }, S);
   await until(async () => (await ev('window.__bootOk === true')) === true, '页面 bootOk', 40000);
-  await until(async () => (await ev('window.__preview.state.ready')) === true, 'eiffel 就绪', 60000);
+  // ready 打开渲染循环后，还需两个实际动画帧才会原子回填 model 的统计与计时。
+  // 等待模型元数据存在，再独立断言数值；不能把“渲染已启动”当成“统计已完成”。
+  await until(async () => (await ev("Boolean(window.__preview.state.ready && window.__preview.state.model && window.__preview.state.model.name === 'eiffel.glb')")) === true, 'eiffel 首帧与统计就绪', 60000);
 
   const st0 = JSON.parse(await ev('JSON.stringify(window.__preview.state)'));
   ok('基线 ready', st0.ready === true);
