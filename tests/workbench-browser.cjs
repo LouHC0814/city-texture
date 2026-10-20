@@ -164,6 +164,7 @@ async function run({ cdp, runtime, screenshotDir }) {
   await cdp.evaluate("(async()=>{const c=document.getElementById('landmark-canvas');c.scrollIntoView({block:'center'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));})()");
   const point = await cdp.evaluate("(()=>{const r=document.getElementById('landmark-canvas').getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return{x,y,hit:document.elementFromPoint(x,y)?.id,viewport:{width:visualViewport.width,height:visualViewport.height,scale:visualViewport.scale,offsetTop:visualViewport.offsetTop},rect:{x:r.x,y:r.y,width:r.width,height:r.height}}})()");
   assert.equal(point.hit, 'landmark-canvas', '触摸坐标必须命中实际画布：'+JSON.stringify(point));
+  await cdp.evaluate("window.__workbenchTouchTrace=[];for(const type of ['pointerdown','pointermove','pointerup','touchstart','touchmove','touchend'])document.getElementById('landmark-canvas').addEventListener(type,event=>__workbenchTouchTrace.push({type,pointerType:event.pointerType,pointerId:event.pointerId,x:event.clientX,y:event.clientY,state:CityLandmarks.getState().controlState,camera:CityLandmarks.getState().camera}))");
   const touchBefore = (await state()).camera;
   await cdp.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: point.x, y: point.y, id: 1 }] });
   await cdp.evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
@@ -172,7 +173,8 @@ async function run({ cdp, runtime, screenshotDir }) {
     await cdp.evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
   }
   await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await delay(250);
-  assert.notDeepEqual((await state()).camera, touchBefore, '真实单指拖动必须改变相机：'+JSON.stringify(point));
+  const trace = await cdp.evaluate('window.__workbenchTouchTrace');
+  assert.notDeepEqual((await state()).camera, touchBefore, '真实单指拖动必须改变相机：'+JSON.stringify({ point, trace }));
   await cdp.evaluate("document.querySelector('.model-toolbar').scrollIntoView({block:'start'})"); await screenshot('建筑工作台手机.png');
   await click('model-remove'); await until(async () => (await state()).library.localCount === 2, '移除模型并回到铁塔');
   assert.equal((await state()).modelId, 'eiffel-tower');
@@ -200,6 +202,20 @@ async function standalone() {
     await cdp.call('Network.setBlockedURLs', { urls: ['http://*', 'https://*'] });
     const html = process.env.CITY_RELEASE_HTML || await require('../scripts/build-standalone.cjs').build();
     await cdp.call('Page.navigate', { url: pathToFileURL(html).href }); await until(() => cdp.evaluate('Boolean(window.CityLandmarks)'), '离线工作台页面');
+    // 先执行既有单指/双指流程，再导航到新页面，复现连续使用时的输入历史。
+    await cdp.call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await cdp.call('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await cdp.evaluate("document.querySelector('[data-observation=landmark]').click()");
+    await until(() => cdp.evaluate('CityLandmarks.getState().loaded'), '触摸历史的铁塔');
+    await cdp.evaluate("document.getElementById('landmark-canvas').scrollIntoView({block:'center'})");
+    const center = await cdp.evaluate("(()=>{const r=document.getElementById('landmark-canvas').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()");
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: center.x, y: center.y }] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: center.x + 45, y: center.y - 10 }] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: center.x - 35, y: center.y }, { x: center.x + 35, y: center.y }] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: center.x - 60, y: center.y }, { x: center.x + 60, y: center.y }] });
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.call('Page.reload'); await until(() => cdp.evaluate('Boolean(window.CityLandmarks)'), '触摸历史后新页面');
     await run({ cdp, runtime, screenshotDir });
   } catch (error) { console.error(logs); throw error; }
   finally { cdp?.socket.close(); if (browser.exitCode === null) browser.kill(); }
