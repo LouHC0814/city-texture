@@ -30,7 +30,11 @@ class CDP {
     await this.ready;
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => { this.pending.delete(id); reject(new Error(`浏览器命令超时：${method}`)); }, 15000);
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        const context = method === 'Runtime.evaluate' ? `；表达式：${String(params.expression).slice(0, 240)}` : '';
+        reject(new Error(`浏览器命令超时：${method}${context}`));
+      }, 15000);
       this.pending.set(id, { resolve, reject, timeout }); this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
