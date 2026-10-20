@@ -217,6 +217,12 @@ async function standalone() {
     await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     await cdp.call('Page.reload'); await until(() => cdp.evaluate('Boolean(window.CityLandmarks)'), '触摸历史后新页面');
     await run({ cdp, runtime, screenshotDir });
+    await fs.writeFile(path.join(screenshotDir, '建筑工作台验证结果.json'), JSON.stringify({
+      checks: ['共享静态准入', '真实 PNG/JPEG 解码与 WebGL 像素', '来源声明', 'GLB/PNG/视角真实下载', '每模型独立相机与线框',
+        '完整工作台保存后真正刷新恢复', '错误贴图隔离', '损坏文件与校验值保护', '慢读取取消与过期预览保护',
+        '快速切换最后选择生效', '旧几何与纹理释放', '手机真实触摸与无横向溢出', '移除模型及视角注册', '阻断网络仍可操作'],
+      javascriptErrors: cdp.errors.length, releaseHTML: Boolean(process.env.CITY_RELEASE_HTML)
+    }, null, 2));
   } catch (error) { console.error(logs); throw error; }
   finally { cdp?.socket.close(); if (browser.exitCode === null) browser.kill(); }
 }

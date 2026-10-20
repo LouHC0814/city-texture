@@ -30,6 +30,9 @@ if (mode === 'unit') {
   if (!chrome) throw new Error('未找到 Chrome / Edge，请设置 CHROME_PATH');
   process.env.CHROME_PATH = chrome;
   run(['tests/browser.cjs']);
+  // 每套输入模拟使用独立浏览器与 profile；两者继承同一个 CITY_RELEASE_HTML。
+  // 主应用流程的多轮鼠标/触摸/视口模拟不泄漏进工作台的触摸会话。
+  run(['tests/workbench-browser.cjs']);
   run([path.join(TOOL, 'tests', 'preview-admission.cjs')]);
   if (process.env.BROWSER_SCREENSHOT_DIR) {
     const destination = path.resolve(ROOT, process.env.BROWSER_SCREENSHOT_DIR, '模型体检');
