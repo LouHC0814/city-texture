@@ -91,5 +91,8 @@ test('图片在真实解码前核对分辨率、总像素与声明类型，防�
   const oversized = Buffer.from(png); oversized.writeUInt32BE(8192, 16);
   await assert.rejects(L.inspect(new Uint8Array(fixtures.textured(oversized))), /4096/);
   await assert.rejects(L.inspect(new Uint8Array(fixtures.textured(png, 'image/jpeg'))), /类型/);
+  const full = Buffer.from(png); full.writeUInt32BE(4096, 16); full.writeUInt32BE(4096, 20);
+  await assert.rejects(L.inspect(new Uint8Array(fixtures.textured(full, 'image/png', 2))), /总像素/);
+  await assert.rejects(L.inspect(new Uint8Array(fixtures.textured(png, 'image/png', 17))), /16 张/);
   assert.equal((await L.inspect(new Uint8Array(fixtures.textured(png)))).triangles, 12);
 });

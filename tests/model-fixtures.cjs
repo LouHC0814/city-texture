@@ -21,7 +21,7 @@ function png() {
   }
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', zlib.deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
 }
-function textured(image = png(), mimeType = 'image/png') {
+function textured(image = png(), mimeType = 'image/png', imageCopies = 1) {
   const original = fs.readFileSync(path.join(__dirname, '../tools/模型体检/反例/10-embedded-png-real.glb'));
   const jsonLength = original.readUInt32LE(12), model = JSON.parse(original.subarray(20, 20 + jsonLength));
   let binary = original.subarray(28 + jsonLength, 28 + jsonLength + model.buffers[0].byteLength);
@@ -40,6 +40,7 @@ function textured(image = png(), mimeType = 'image/png') {
   binary = Buffer.concat([binary, uv]);
   const view = model.bufferViews[model.images[0].bufferView]; view.byteOffset = binary.length; view.byteLength = image.length;
   binary = Buffer.concat([binary, image]); model.images[0].mimeType = mimeType; model.buffers[0].byteLength = binary.length;
+  model.images = Array.from({ length: imageCopies }, () => ({ ...model.images[0] }));
   model.asset.copyright = '城市纹理人工验收样本；不是南京或其他真实建筑。';
   let json = Buffer.from(JSON.stringify(model)); json = Buffer.concat([json, Buffer.alloc((4 - json.length % 4) % 4, 32)]);
   binary = Buffer.concat([binary, Buffer.alloc((4 - binary.length % 4) % 4)]);

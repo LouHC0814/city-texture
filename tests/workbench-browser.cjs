@@ -55,13 +55,16 @@ async function run({ cdp, runtime, screenshotDir }) {
     const dir = path.join(folder, 'download-' + ++downloadIndex); await fs.mkdir(dir);
     await cdp.call('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dir, eventsEnabled: true });
     await click(id);
+    const extension = { 'landmark-download': '.glb', 'landmark-export': '.png', 'save-view': '.json', 'workspace-save': '.json' }[id];
     const file = await until(async () => {
-      const names = (await fs.readdir(dir)).filter(name => !name.endsWith('.crdownload'));
+      const names = (await fs.readdir(dir)).filter(name => path.extname(name).toLowerCase() === extension);
       if (names.length !== 1) return false;
       const target = path.join(dir, names[0]);
-      const a = await fs.stat(target); await delay(120); const b = await fs.stat(target);
-      if (!a.size || a.size !== b.size) return false;
-      const handle = await fs.open(target); await handle.close(); return target;
+      try {
+        const a = await fs.stat(target); await delay(120); const b = await fs.stat(target);
+        if (!a.size || a.size !== b.size) return false;
+        const handle = await fs.open(target); await handle.close(); return target;
+      } catch (error) { if (['ENOENT', 'EPERM', 'EACCES'].includes(error.code)) return false; throw error; }
     }, '工作台真实下载 ' + id, 25000);
     return file;
   }
@@ -153,17 +156,23 @@ async function run({ cdp, runtime, screenshotDir }) {
   await cdp.evaluate(`for(const id of ${JSON.stringify([second.modelId, first.modelId, 'eiffel-tower'])}){const s=document.getElementById('model-select');s.value=id;s.dispatchEvent(new Event('change'))}`);
   await until(async () => { const s = await state(); return s.modelId === 'eiffel-tower' && !s.switching; }, '快速切换最后选择生效', 30000); await delay(500);
   assert.equal((await state()).modelId, 'eiffel-tower'); await cdp.evaluate('window.createImageBitmap=window.__bitmap');
+  await cdp.evaluate("document.querySelector('.model-toolbar').scrollIntoView({block:'start'})"); await screenshot('建筑工作台铁塔.png');
   await choose(third.modelId);
   await cdp.call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await cdp.call('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }); await delay(220);
   assert.equal(await cdp.evaluate('document.documentElement.scrollWidth<=innerWidth'), true);
-  await cdp.evaluate("document.getElementById('landmark-canvas').scrollIntoView({block:'center'})");
-  const point = await cdp.evaluate("(()=>{const r=document.getElementById('landmark-canvas').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()");
+  await cdp.evaluate("(async()=>{const c=document.getElementById('landmark-canvas');c.scrollIntoView({block:'center'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));})()");
+  const point = await cdp.evaluate("(()=>{const r=document.getElementById('landmark-canvas').getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return{x,y,hit:document.elementFromPoint(x,y)?.id,viewport:{width:visualViewport.width,height:visualViewport.height,scale:visualViewport.scale,offsetTop:visualViewport.offsetTop},rect:{x:r.x,y:r.y,width:r.width,height:r.height}}})()");
+  assert.equal(point.hit, 'landmark-canvas', '触摸坐标必须命中实际画布：'+JSON.stringify(point));
   const touchBefore = (await state()).camera;
   await cdp.call('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: point.x, y: point.y, id: 1 }] });
-  await cdp.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x + 40, y: point.y + 20, id: 1 }] });
+  await cdp.evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
+  for (let step = 1; step <= 4; step++) {
+    await cdp.call('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x + step * 10, y: point.y + step * 5, id: 1 }] });
+    await cdp.evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
+  }
   await cdp.call('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await delay(250);
-  assert.notDeepEqual((await state()).camera, touchBefore);
+  assert.notDeepEqual((await state()).camera, touchBefore, '真实单指拖动必须改变相机：'+JSON.stringify(point));
   await cdp.evaluate("document.querySelector('.model-toolbar').scrollIntoView({block:'start'})"); await screenshot('建筑工作台手机.png');
   await click('model-remove'); await until(async () => (await state()).library.localCount === 2, '移除模型并回到铁塔');
   assert.equal((await state()).modelId, 'eiffel-tower');
