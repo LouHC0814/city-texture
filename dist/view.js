@@ -6,9 +6,15 @@
   // 文件只保存几个三元组与四个数值，16 KiB 足够且能阻止恶意大文件。
   const MAX_BYTES = 16 * 1024;
   // 已知模型：写入时把当前模型 ID 与作者/许可一起核验；跨模型视角禁止共用，避免错位到不同形状上。
-  const KNOWN_MODELS = {
+  const KNOWN_MODELS = Object.assign(Object.create(null), {
     'eiffel-tower': { author: 'SDC', license: 'CC-BY-4.0', label: '埃菲尔铁塔' }
-  };
+  });
+  function registerModel(id, metadata) {
+    if (typeof id !== 'string' || !/^local-[a-f0-9]{64}$/.test(id)) invalid('本地模型标识必须包含文件 SHA-256');
+    if (!metadata || !['author', 'license', 'label'].every(key => typeof metadata[key] === 'string' && metadata[key].length > 0 && metadata[key].length <= 160)) invalid('模型署名信息无效');
+    KNOWN_MODELS[id] = Object.freeze({ author: metadata.author, license: metadata.license, label: metadata.label });
+  }
+  function unregisterModel(id) { if (id !== 'eiffel-tower') delete KNOWN_MODELS[id]; }
   const VALID_PRESETS = ['iso', 'front', 'top', 'custom'];
   function invalid(message) { throw new Error(message); }
   function isFiniteNumber(value) { return typeof value === 'number' && Number.isFinite(value); }
@@ -23,14 +29,14 @@
     if (!isFiniteNumber(value)) invalid(`视角${name}必须为有限数值`);
     if (value < min || value > max) invalid(`视角${name}超出 ${min}–${max} 范围`);
   }
-  function validateView(value) {
+  function validateView(value, knownModels = KNOWN_MODELS) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) invalid('文件不是有效的三维视角');
     // 顶层字段同样严格白名单，避免悄悄接受带附加属性的对象。
     const topAllowed = ['format', 'version', 'modelId', 'view', 'wireframe'];
     for (const key of Object.keys(value)) if (!topAllowed.includes(key)) invalid('视角文件包含未知字段：' + key);
     if (value.format !== FORMAT) invalid('请使用城市纹理三维视角文件格式（不是比较项目或样本包）');
     if (value.version !== VERSION) invalid('三维视角文件版本不匹配，请使用当前版本的程序');
-    const model = KNOWN_MODELS[value.modelId];
+    const model = typeof value.modelId === 'string' && Object.hasOwn(knownModels, value.modelId) && knownModels[value.modelId];
     if (!model) invalid('视角对应的模型与当前展台不一致，三维视角不能跨模型使用');
     if (!value.view || typeof value.view !== 'object' || Array.isArray(value.view)) invalid('视角数据缺失或结构错误');
     const view = value.view;
@@ -56,16 +62,16 @@
         fov: view.fov, near: view.near, far: view.far, distance }
     };
   }
-  function parseView(input) {
+  function parseView(input, knownModels = KNOWN_MODELS) {
     if (typeof input !== 'string') invalid('视角文件必须是字符串');
     const stripped = input.replace(/^\uFEFF/, '');
     const bytes = new TextEncoder().encode(stripped).byteLength;
     if (bytes > MAX_BYTES) invalid(`视角文件不能超过 ${MAX_BYTES} 字节`);
     let value; try { value = JSON.parse(stripped); } catch (_) { invalid('文件不是有效的 JSON 视角文件'); }
-    return validateView(value);
+    return validateView(value, knownModels);
   }
   function createView(modelId, view, wireframe) {
-    if (!KNOWN_MODELS[modelId]) invalid('当前模型尚未注册到三维视角文件');
+    if (!Object.hasOwn(KNOWN_MODELS, modelId)) invalid('当前模型尚未注册到三维视角文件');
     const value = {
       format: FORMAT, version: VERSION, modelId, wireframe: Boolean(wireframe),
       view: { view: view.view || 'custom', camera: view.camera.slice(), target: view.target.slice(),
@@ -76,6 +82,6 @@
     if (new TextEncoder().encode(json).byteLength > MAX_BYTES) invalid(`视角文件不能超过 ${MAX_BYTES} 字节`);
     return value;
   }
-  const api = { FORMAT, VERSION, MAX_BYTES, KNOWN_MODELS, VALID_PRESETS, validateView, parseView, createView };
+  const api = { FORMAT, VERSION, MAX_BYTES, KNOWN_MODELS, VALID_PRESETS, validateView, parseView, createView, registerModel, unregisterModel };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.CityView = api;
 })(globalThis);

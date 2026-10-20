@@ -8,59 +8,7 @@ const C = require('../dist/core.js');
 const { pathToFileURL } = require('node:url');
 const { build } = require('../scripts/build-standalone.cjs');
 if (typeof WebSocket === 'undefined') throw new Error('浏览器检查需要 Node.js 22 或更新版本。');
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-class CDP {
-  constructor(url) {
-    this.socket = new WebSocket(url); this.pending = new Map(); this.events = new Map(); this.listeners = new Map(); this.nextId = 0; this.errors = [];
-    this.ready = new Promise((resolve, reject) => { this.socket.addEventListener('open', resolve, { once: true }); this.socket.addEventListener('error', reject, { once: true }); });
-    this.socket.addEventListener('message', (event) => {
-      const data = JSON.parse(String(event.data));
-      if (data.id && this.pending.has(data.id)) {
-        const pending = this.pending.get(data.id); this.pending.delete(data.id); clearTimeout(pending.timeout);
-        if (data.error) pending.reject(new Error(data.error.message)); else pending.resolve(data.result);
-      }
-      if (data.method === 'Runtime.exceptionThrown') this.errors.push(data.params.exceptionDetails);
-      if (data.method === 'Page.javascriptDialogOpening') this.call('Page.handleJavaScriptDialog', { accept: true }).catch(() => {});
-      if (data.method && this.events.has(data.method)) {
-        const waiting = this.events.get(data.method); this.events.delete(data.method);
-        for (const item of waiting) { clearTimeout(item.timeout); item.resolve(data.params); }
-      }
-      if (data.method && this.listeners.has(data.method)) for (const handler of this.listeners.get(data.method)) handler(data.params);
-    });
-  }
-  // 持久订阅：先订阅再触发动作，事件不会因为「订阅前已经到达」而丢失，
-  // 用于替代一次性 wait() 在这类动作-事件时序不确定场景下的竞态。
-  subscribe(method, handler) {
-    const list = this.listeners.get(method) || []; list.push(handler); this.listeners.set(method, list);
-    return () => { const current = this.listeners.get(method) || []; const index = current.indexOf(handler); if (index >= 0) current.splice(index, 1); };
-  }
-  async call(method, params = {}) {
-    await this.ready;
-    const id = ++this.nextId;
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => { this.pending.delete(id); reject(new Error(`浏览器命令超时：${method}`)); }, 15000);
-      this.pending.set(id, { resolve, reject, timeout }); this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-  wait(method) {
-    return new Promise((resolve, reject) => {
-      const item = { resolve, timeout: setTimeout(() => reject(new Error(`等待事件超时：${method}`)), 15000) };
-      const waiting = this.events.get(method) || []; waiting.push(item); this.events.set(method, waiting);
-    });
-  }
-  async evaluate(expression) {
-    const result = await this.call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-    if (result.exceptionDetails) throw new Error(result.exceptionDetails.text + ': ' + JSON.stringify(result.exceptionDetails.exception));
-    return result.result.value;
-  }
-}
-
-async function until(callback, label, timeout = 10000) {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) { const result = await callback(); if (result) return result; await delay(60); }
-  throw new Error(`检查超时：${label}`);
-}
+const { CDP, until, delay } = require("./browser-driver.cjs");
 
 (async () => {
   const repo = path.resolve(__dirname, '..'), runtime = path.join(repo, '.runtime', `browser-${Date.now()}`), downloads = path.join(runtime, 'downloads');
@@ -1053,9 +1001,10 @@ async function until(callback, label, timeout = 10000) {
     await chooseProject(customProjectPath); await applyProject(); await checkProjectRestored();
     await openLandmark(); assert.ok(await landmarkPixels() > 300, '断网单文件实际渲染三维模型'); await dragLandmark(30, 10);
     await cdp.evaluate("document.querySelector('[data-observation=map]').click()"); await checkProjectRestored();
+    await require("./workbench-browser.cjs").run({ cdp, runtime, screenshotDir });
     assert.equal(cdp.errors.length, 0, JSON.stringify(cdp.errors));
     await fs.copyFile(path.join(downloads, pngName), path.join(screenshotDir, '双城观察卡.png'));
-    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['三维 WebGL 实际钢架像素', '鼠标旋转与键盘相机', '三种三维预设视角', '三维缩放自动旋转线框与重置', 'GLB 与署名三维观察卡实际下载', '图形丢失与不可用后的重试', '隐藏三维停止绘制', '手机单指旋转与双指缩放', '断网单文件三维模型', '三维视角 JSON 实际下载与字段校验', '切视角后保存的相机/目标实际恢复', '视角预览文本描述预设与距离', '跨模型视角被拒绝并保留当前镜头', '损坏 JSON 与跨格式文件被拒绝', '完整比较项目实际下载与重新打开', '三份导入样本整体替换', '项目预览与取消', '项目慢读取取消', '损坏缺失冒用内置与超大项目保护', '手机与断网项目恢复', '三种图层真实画布', '真实内院像素保留', '建筑统计随移动变化', '道路与建筑独立来源导出', '四种尺度双侧统计', '鼠标左右图拖动', '键盘平移与Home', '共同边界限制', '缩放重新约束', '复制视图(隔离剪贴板接口)', '手动复制后备路径', '恢复与错误输入保护', '实际平移中心导出', '手机触摸拖动', '步行开关', '交换及选择城市', '同城一致性', '旧URL兼容', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['经典建筑3D预览.png', '经典建筑3D手机预览.png', '经典建筑3D观察卡.png', '三维视角保存与恢复.png', '比较项目预览.png', '比较项目手机预览.png', '桌面预览.png', '建筑图层预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
+    await fs.writeFile(path.join(runtime, '验证结果.json'), JSON.stringify({ checks: ['建筑工作台：导入、来源、独立视角、真实刷新恢复、PNG/JPEG像素、资源释放、取消、手机断网', '三维 WebGL 实际钢架像素', '鼠标旋转与键盘相机', '三种三维预设视角', '三维缩放自动旋转线框与重置', 'GLB 与署名三维观察卡实际下载', '图形丢失与不可用后的重试', '隐藏三维停止绘制', '手机单指旋转与双指缩放', '断网单文件三维模型', '三维视角 JSON 实际下载与字段校验', '切视角后保存的相机/目标实际恢复', '视角预览文本描述预设与距离', '跨模型视角被拒绝并保留当前镜头', '损坏 JSON 与跨格式文件被拒绝', '完整比较项目实际下载与重新打开', '三份导入样本整体替换', '项目预览与取消', '项目慢读取取消', '损坏缺失冒用内置与超大项目保护', '手机与断网项目恢复', '三种图层真实画布', '真实内院像素保留', '建筑统计随移动变化', '道路与建筑独立来源导出', '四种尺度双侧统计', '鼠标左右图拖动', '键盘平移与Home', '共同边界限制', '缩放重新约束', '复制视图(隔离剪贴板接口)', '手动复制后备路径', '恢复与错误输入保护', '实际平移中心导出', '手机触摸拖动', '步行开关', '交换及选择城市', '同城一致性', '旧URL兼容', '重置', '对话框与Escape', 'JSON及PNG下载', '地图绘制', '手机无横向溢出', '禁用网络下单文件运行'], javascriptErrors: cdp.errors.length, screenshots: ['经典建筑3D预览.png', '经典建筑3D手机预览.png', '经典建筑3D观察卡.png', '三维视角保存与恢复.png', '比较项目预览.png', '比较项目手机预览.png', '桌面预览.png', '建筑图层预览.png', '手机预览.png', '双城观察卡.png'] }, null, 2));
     console.log('浏览器检查通过：真实三维 WebGL 像素、旋转/缩放/多视角、键盘/触摸/双指、GLB/署名PNG、图形故障恢复、断网三维；比较项目真实下载/重新打开、三份导入样本整体恢复与替换、预览/取消/慢读取取消、损坏/冒用内置/缺失样本/超大文件保护、手机与断网项目恢复；原有样本和地图交互检查通过，JavaScript 异常 0。');
   } catch (e) { console.error(logs); throw e; }
   finally {

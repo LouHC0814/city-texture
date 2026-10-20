@@ -2,17 +2,20 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { createWorkbench } from './workbench.js';
 
 const $ = id => document.getElementById(id);
-const data = window.CityLandmarkData;
+const builtin = { ...window.CityLandmarkData, builtin: true };
+let data = builtin;
 // 视角保存/打开校验与序列化在 dist/view.js 中独立实现；本模块仅通过 window 引用。
 const V = window.CityView;
-const MODEL_ID = 'eiffel-tower';
 const PRESET_NAMES = { iso: '立体视角', front: '正面', top: '俯视', custom: '自定义视角' };
 let active = false, loading = null, loaded = false, failed = false, spinning = false, frame = 0, renders = 0;
 let renderer, scene, camera, controls, model, environment, canvas, distance = 24, view = 'iso', wireframe = false;
 // 模型包围球半径（按放大后尺寸与居中后位置计算），用于运行时核对视角是否合理。
 let modelExtent = 0;
+let modelScenes = [], switchSerial = 0, switching = false, renderedModelId = null;
+const modelTarget = new THREE.Vector3(0, 5.6, 0);
 // applyView() 设 true 后让 size() 跳过这次缩放，避免在恢复后被 OrbitControls 静默截断。
 let viewJustApplied = false;
 // 跨视口恢复时（例如移动端保存→桌面端打开），savedDistance 可能超过当前 size() 算出的 maxDistance；
@@ -44,12 +47,13 @@ function fitProjection(distanceFromCamera) {
 }
 let glbBuffer;
 
-async function modelBytes() {
+async function modelBytes(entry = data) {
+  if (!entry.builtin) return entry.bytes.slice().buffer;
   if (!glbBuffer) {
     if (typeof DecompressionStream !== 'function') throw new Error('请使用支持离线解压的新版 Chrome 或 Edge');
-    const compressed = Uint8Array.from(atob(data.data), char => char.charCodeAt(0));
+    const compressed = Uint8Array.from(atob(builtin.data), char => char.charCodeAt(0));
     glbBuffer = await new Response(new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
-    if (glbBuffer.byteLength !== data.glbBytes) throw new Error('内置模型长度不一致');
+    if (glbBuffer.byteLength !== builtin.glbBytes) throw new Error('内置模型长度不一致');
   }
   return glbBuffer;
 }
@@ -59,7 +63,7 @@ function requestRender() {
   if (frame || !active || !loaded || document.hidden || failed) return;
   frame = requestAnimationFrame(() => {
     frame = 0; if (!active || !loaded || document.hidden || failed) return;
-    controls.update(); renderer.render(scene, camera); renders++;
+    controls.update(); renderer.render(scene, camera); renderedModelId = data.id; renders++;
     if (spinning) requestRender();
   });
 }
@@ -72,7 +76,7 @@ function size() {
   camera.aspect = box.width / box.height; camera.updateProjectionMatrix();
   const halfFov = Math.min(THREE.MathUtils.degToRad(camera.fov / 2), Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect));
   const previousDistance = distance;
-  distance = 7 / Math.sin(halfFov) * 1.13;
+  distance = (data.builtin ? 7 : modelExtent || 7) / Math.sin(halfFov) * 1.13;
   if (loaded && previousDistance && !viewJustApplied) {
     const offset = camera.position.clone().sub(controls.target).multiplyScalar(distance / previousDistance);
     camera.position.copy(controls.target).add(offset);
@@ -96,7 +100,7 @@ function angle(phi, theta, radius = camera.position.distanceTo(controls.target))
 }
 function preset(name) {
   if (!loaded || failed) return;
-  view = name; controls.target.set(0, 5.6, 0);
+  view = name; controls.target.copy(modelTarget);
   // 用户主动切换预设，把视角文件留下的 viewJustApplied 清掉，让后续拖动能再次标记为 custom。
   // 同时把极角上下限恢复到正常范围（applyView 期间已临时放宽），避免用户绕过默认视角。
   viewJustApplied = false;
@@ -137,19 +141,88 @@ function save(blob, name) {
   const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 function error(message) {
-  failed = true; loaded = false; stop(); spin(false);
+  switchSerial++; switching = false; failed = true; loaded = false; stop(); spin(false);
   $('landmark-stage').dataset.state = 'error'; $('landmark-retry').hidden = false;
   $('landmark-controls').querySelectorAll('button,input').forEach(element => { element.disabled = true; });
   status('三维展台暂时无法显示：' + message + '。可以重试，或回到城区比较继续使用。');
 }
 function dispose() {
-  stop(); loaded = false;
+  switchSerial++; switching = false; stop(); loaded = false;
   controls?.dispose();
+  if (model) scene?.remove(model);
+  disposeModels(modelScenes); modelScenes = [];
   scene?.traverse(object => {
     if (object.isMesh) { object.geometry.dispose(); for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.dispose(); }
   });
   environment?.dispose(); renderer?.dispose(); renderer?.forceContextLoss();
   renderer = controls = scene = camera = model = environment = null;
+}
+function disposeModels(scenes) {
+  const geometries = new Set(), materials = new Set(), textures = new Set(), images = new Set();
+  for (const root of scenes) root.traverse(object => {
+    if (object.geometry) geometries.add(object.geometry);
+    for (const material of object.material ? Array.isArray(object.material) ? object.material : [object.material] : []) {
+      materials.add(material);
+      for (const [key, value] of Object.entries(material)) if (key !== 'envMap' && value?.isTexture) textures.add(value);
+    }
+  });
+  for (const geometry of geometries) geometry.dispose();
+  for (const material of materials) material.dispose();
+  for (const texture of textures) { if (texture.source?.data?.close) images.add(texture.source.data); texture.dispose(); }
+  for (const image of images) image.close();
+}
+async function prepareModel(entry) {
+  const manager = new THREE.LoadingManager(), resourceErrors = [], objectURLs = new Set();
+  manager.setURLModifier(url => {
+    if (!url.startsWith('blob:') && !/^data:image\/(png|jpeg);base64,/i.test(url)) throw new Error('模型包含非内嵌资源，不能离线加入');
+    if (url.startsWith('blob:')) objectURLs.add(url);
+    return url;
+  });
+  manager.onError = url => resourceErrors.push(url);
+  let gltf;
+  try { gltf = await new GLTFLoader(manager).parseAsync(await modelBytes(entry), ''); }
+  finally { for (const url of objectURLs) URL.revokeObjectURL(url); }
+  try {
+    if (resourceErrors.length) throw new Error('模型贴图未能解码，原有建筑已保留');
+    const root = gltf.scene;
+    const box = new THREE.Box3().setFromObject(root), dimensions = box.getSize(new THREE.Vector3());
+    const span = Math.max(dimensions.x, dimensions.y, dimensions.z);
+    if (!Number.isFinite(span) || span < 1e-9 || span > 1e12) throw new Error('模型数值尺度过小或过大，无法可靠展示');
+    root.scale.multiplyScalar(12 / span);
+    const scaled = new THREE.Box3().setFromObject(root), center = scaled.getCenter(new THREE.Vector3());
+    root.position.sub(new THREE.Vector3(center.x, scaled.min.y, center.z));
+    const finalBox = new THREE.Box3().setFromObject(root), size = finalBox.getSize(new THREE.Vector3());
+    const extent = size.length() / 2;
+    if (!Number.isFinite(extent) || extent <= 0) throw new Error('模型展示范围无效');
+    root.traverse(object => { if (object.isMesh) { object.castShadow = true; object.receiveShadow = true; } });
+    return { root, scenes: gltf.scenes, extent, targetY: entry.builtin ? 5.6 : size.y / 2 };
+  } catch (error) { disposeModels(gltf.scenes); throw error; }
+}
+async function installModel(entry, { saved, valid = () => true, commit = () => {} } = {}) {
+  if (!renderer || failed) throw new Error('请先重试三维展台，再加入模型');
+  const serial = ++switchSerial; switching = true;
+  let prepared, committed = false;
+  try {
+    prepared = await prepareModel(entry);
+    if (serial !== switchSerial || !valid()) { disposeModels(prepared.scenes); return false; }
+    const restored = saved ? V.validateView(saved, { [entry.id]: entry }) : null;
+    if (restored && restored.view.far < restored.view.distance + prepared.extent) throw new Error('保存视角的远裁剪面不足以显示这份模型');
+    commit();
+    stop(); spin(false); viewGeneration++; clearViewPreview(); if (viewDialog.open) viewDialog.close();
+    const oldScenes = modelScenes; if (model) scene.remove(model);
+    data = entry; model = prepared.root; modelScenes = prepared.scenes; modelExtent = prepared.extent;
+    modelTarget.set(0, prepared.targetY, 0); scene.add(model);
+    viewJustApplied = false; rememberedMaxDistance = 0; wireframe = false;
+    camera.fov = 40; camera.near = 0.1; camera.far = 180; camera.updateProjectionMatrix();
+    controls.minDistance = 3; controls.maxDistance = 180 - modelExtent; controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI / 2 - 0.015;
+    loaded = true; $('landmark-stage').dataset.state = 'ready'; $('landmark-wireframe').checked = false;
+    size(); preset('iso'); if (restored) applyView(restored);
+    committed = true; disposeModels(oldScenes);
+    $('landmark-controls').querySelectorAll('button,input').forEach(element => { element.disabled = false; });
+    status(`${data.triangles.toLocaleString('zh-CN')} 个网格三角面 · ${data.name}已加载，可拖动旋转`);
+    workbench.ready(); requestRender(); return true;
+  } catch (error) { if (prepared && !committed) disposeModels(prepared.scenes); throw error; }
+  finally { if (serial === switchSerial) switching = false; }
 }
 async function init() {
   failed = false; $('landmark-retry').hidden = true; $('landmark-stage').dataset.state = 'loading'; status('正在准备三维模型…');
@@ -182,20 +255,7 @@ async function init() {
     const fill = new THREE.DirectionalLight(0xe2edff, 2); fill.position.set(-13, 10, -9); scene.add(fill);
     const ground = new THREE.Mesh(new THREE.CylinderGeometry(7.4, 7.4, 0.16, 80), new THREE.MeshStandardMaterial({ color: '#e3e8db', roughness: 0.95 }));
     ground.position.y = -0.09; ground.receiveShadow = true; scene.add(ground);
-    const gltf = await new GLTFLoader().parseAsync(await modelBytes(), ''); model = gltf.scene;
-    const bounds = new THREE.Box3().setFromObject(model), dimensions = bounds.getSize(new THREE.Vector3());
-    const scale = 12 / Math.max(dimensions.x, dimensions.y, dimensions.z);
-    model.scale.multiplyScalar(scale); const scaled = new THREE.Box3().setFromObject(model), center = scaled.getCenter(new THREE.Vector3());
-    model.position.sub(new THREE.Vector3(center.x, scaled.min.y, center.z));
-    // 重新计算一次包围盒以匹配最终位置；用半对角线作为模型包围球半径。
-    const finalBox = new THREE.Box3().setFromObject(model);
-    const finalSize = finalBox.getSize(new THREE.Vector3());
-    modelExtent = Math.sqrt((finalSize.x * finalSize.x + finalSize.y * finalSize.y + finalSize.z * finalSize.z)) / 2;
-    model.traverse(object => { if (object.isMesh) { object.castShadow = true; object.receiveShadow = true; } }); scene.add(model);
-    setWireframe(wireframe); loaded = true; $('landmark-stage').dataset.state = 'ready';
-    $('landmark-controls').querySelectorAll('button,input').forEach(element => { element.disabled = false; });
-    status(`${data.triangles.toLocaleString('zh-CN')} 个三角面 · 模型已加载，可拖动旋转`);
-    size(); preset('iso'); requestRender();
+    await installModel(data);
     canvas.addEventListener('webglcontextlost', event => { if (event.target !== canvas) return; event.preventDefault(); error('图形上下文已中断'); });
     canvas.addEventListener('keydown', event => {
       if (!loaded || failed) return;
@@ -230,7 +290,7 @@ function captureView() {
   if (modelExtent > 0 && camera.far < viewDistance + modelExtent) {
     throw new Error(`当前远裁剪面（${camera.far}）小于相机距离与模型包围球半径之和 ${(viewDistance + modelExtent).toFixed(2)}，请调整视角或等待投影保护同步后再保存`);
   }
-  const value = V.createView(MODEL_ID, {
+  const value = V.createView(data.id, {
     view,
     camera: camera.position.toArray(),
     target: controls.target.toArray(),
@@ -247,6 +307,7 @@ function describeView(result) {
 }
 function applyView(result) {
   if (!loaded || failed) throw new Error('模型未就绪，无法打开视角');
+  if (result.modelId !== data.id) throw new Error('视角对应的模型与当前展台不一致');
   // 运行时核对：远裁剪面必须留出模型包围空间。
   // 合法文件保存的相机/目标/FOV/near/far 全部原样恢复，自动调整投影只用于后续缩放，
   // 不会在打开瞬间悄悄改参数。最小距离取 previousMin 与 fileDistance*1.05 之中较小的值，
@@ -325,7 +386,7 @@ $('view-file').addEventListener('change', async () => {
     if (file.size > V.MAX_BYTES) throw new Error(`视角文件不能超过 ${V.MAX_BYTES} 字节`);
     const input = await file.text(); if (generation !== viewGeneration) return;
     const result = V.parseView(input);
-    if (result.modelId !== MODEL_ID) throw new Error('视角对应的模型与当前展台不一致');
+    if (result.modelId !== data.id) throw new Error('视角对应的模型与当前展台不一致');
     // 运行时核对：远裁剪面不足会让模型被裁；文件级校验后用真实模型包围球再校一次。
     // 最小距离交由 OrbitControls.minDistance 限制，不在这里再加额外下限，避免合法近距离视角被拒。
     if (modelExtent > 0 && result.view.far < result.view.distance + modelExtent) throw new Error(`视角远裁剪面（${result.view.far}）过小，需要至少 ${(result.view.distance + modelExtent).toFixed(2)} 才能显示完整模型`);
@@ -352,7 +413,7 @@ $('landmark-reset').addEventListener('click', () => { spin(false); $('landmark-w
 $('landmark-wireframe').addEventListener('change', event => setWireframe(event.target.checked));
 $('landmark-retry').addEventListener('click', () => { dispose(); loading = init(); });
 $('landmark-download').addEventListener('click', async () => {
-  try { save(new Blob([await modelBytes()], { type: 'model/gltf-binary' }), 'eiffel-tower-SDC-CC-BY-4.0.glb'); }
+  try { const entry = data; save(new Blob([await modelBytes(entry)], { type: 'model/gltf-binary' }), entry.builtin ? 'eiffel-tower-SDC-CC-BY-4.0.glb' : `城市纹理-${safeFilename(entry.name)}.glb`); }
   catch (failure) { status('模型下载失败：' + failure.message); }
 });
 $('landmark-export').addEventListener('click', () => {
@@ -360,14 +421,18 @@ $('landmark-export').addEventListener('click', () => {
   spin(false); renderer.render(scene, camera);
   const output = document.createElement('canvas'); output.width = 1600; output.height = 1200; const ctx = output.getContext('2d');
   ctx.fillStyle = '#f6f5ef'; ctx.fillRect(0, 0, 1600, 1200); ctx.fillStyle = '#253b34'; ctx.font = '34px sans-serif'; ctx.fillText('城市纹理 / 经典建筑 3D', 60, 65);
-  ctx.font = '21px sans-serif'; ctx.fillText('埃菲尔铁塔 · 巴黎', 60, 104);
+  ctx.font = '21px sans-serif'; ctx.fillText(`${data.name} · ${data.place}`, 60, 104, 1480);
   const factor = Math.min(1480 / canvas.width, 900 / canvas.height), w = canvas.width * factor, h = canvas.height * factor;
   ctx.drawImage(canvas, (1600 - w) / 2, 125 + (900 - h) / 2, w, h);
-  ctx.font = '16px sans-serif'; ctx.fillStyle = '#67766c'; ctx.fillText('模型：SDC · ( FREE ) La tour Eiffel · CC BY 4.0 · 已统一展示缩放，不用于测量。', 60, 1062);
-  ctx.fillText(data.source, 60, 1096, 1480); ctx.fillText('https://sketchfab.com/3Duae · https://creativecommons.org/licenses/by/4.0/', 60, 1130);
-  ctx.fillText('城市纹理 v0.8 · https://github.com/LouHC0814/city-texture', 60, 1164);
-  output.toBlob(blob => { if (blob) save(blob, '城市纹理-埃菲尔铁塔3D.png'); }, 'image/png');
+  ctx.font = '16px sans-serif'; ctx.fillStyle = '#67766c'; ctx.fillText(`模型：${data.author} · ${data.license} · 已统一展示缩放，不用于测量。`, 60, 1062, 1480);
+  ctx.fillText(data.source || '本地模型 · 原始来源链接未声明', 60, 1096, 1480);
+  ctx.fillText(data.builtin ? 'https://sketchfab.com/3Duae · https://creativecommons.org/licenses/by/4.0/' : '本地导入；作者、来源与许可为提供者声明。' + (data.copyright ? ' 文件内声明：' + data.copyright : ''), 60, 1130, 1480);
+  ctx.fillText('城市纹理 v0.9 · https://github.com/LouHC0814/city-texture', 60, 1164);
+  const name = safeFilename(data.name);
+  output.toBlob(blob => { if (blob) save(blob, `城市纹理-${name}3D.png`); }, 'image/png');
 });
+function safeFilename(name) { return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 80); }
+const workbench = createWorkbench({ builtin, V, getState: () => ({ modelId: data.id, loaded, failed }), capture: captureView, install: installModel, download: save });
 new ResizeObserver(() => { size(); }).observe($('landmark-stage'));
 document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); else requestRender(); });
 window.addEventListener('pagehide', stop);
@@ -378,4 +443,5 @@ window.CityLandmarks = { getState: () => ({ active, loaded, failed, spinning, wi
   // 不必经过间接几何计算；同时与 fitProjection() 单一数据源保持一致。
   fov: camera?.fov, near: camera?.near, far: camera?.far,
   modelExtent, minDistance: controls?.minDistance, maxDistance: controls?.maxDistance,
+  modelId: data.id, modelName: data.name, renderedModelId, switching, library: workbench.state(), memory: renderer ? { ...renderer.info.memory } : null,
   contextLost: renderer?.getContext().isContextLost() ?? true }) };
