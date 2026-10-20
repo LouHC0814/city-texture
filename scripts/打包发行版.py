@@ -40,6 +40,8 @@ def package(commit: str, output: Path | None = None, node: str | None = None) ->
     sample_guide = (ROOT / "docs" / "样本包格式与导入.md").read_text(encoding="utf-8")
     project_guide = (ROOT / "docs" / "比较项目格式与恢复.md").read_text(encoding="utf-8")
     landmark_guide = (ROOT / "docs" / "三维建筑使用说明.md").read_text(encoding="utf-8")
+    workbench_guide = (ROOT / "docs" / "建筑工作台使用说明.md").read_text(encoding="utf-8")
+    workbench_format = (ROOT / "docs" / "建筑工作台格式.md").read_text(encoding="utf-8")
     model_license = (ROOT / "模型许可.md").read_text(encoding="utf-8")
     three_license = (ROOT / "licenses" / "three-MIT.txt").read_text(encoding="utf-8")
     info = dict(app="城市纹理", version=version, sourceCommit=commit,
@@ -57,7 +59,8 @@ def package(commit: str, output: Path | None = None, node: str | None = None) ->
                 "程序许可.txt": license_text.encode("utf-8"), "数据许可.md": data_license.encode("utf-8"),
                 "版本信息.json": info_text.encode("utf-8"), "样本包格式与导入.md": sample_guide.encode("utf-8"),
                 "比较项目格式与恢复.md": project_guide.encode("utf-8"), "三维建筑使用说明.md": landmark_guide.encode("utf-8"),
-                "模型许可.md": model_license.encode("utf-8"), "Three.js许可.txt": three_license.encode("utf-8")}
+                "模型许可.md": model_license.encode("utf-8"), "Three.js许可.txt": three_license.encode("utf-8"),
+                "建筑工作台使用说明.md": workbench_guide.encode("utf-8"), "建筑工作台格式.md": workbench_format.encode("utf-8")}
     with zipfile.ZipFile(release_dir / zip_name, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, data in contents.items():
             entry = zipfile.ZipInfo(f"{folder}/{name}", date_time=(2026, 1, 1, 0, 0, 0))

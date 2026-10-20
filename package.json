@@ -1,6 +1,6 @@
 {
   "name": "city-texture",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "城市纹理：基于真实 OSM 城区样本的同尺度道路比较工具",
   "scripts": {
@@ -11,7 +11,8 @@
     "build:3d": "node scripts/build-landmarks.cjs",
     "test:models": "npm --prefix tools/模型体检 test",
     "test:models:browser": "npm --prefix tools/模型体检 run test:browser",
-    "model:inspect": "node tools/模型体检/bin/gltf-inspect.cjs"
+    "model:inspect": "node tools/模型体检/bin/gltf-inspect.cjs",
+    "test:workbench": "node tests/workbench-browser.cjs"
   },
   "engines": {
     "node": ">=22"
